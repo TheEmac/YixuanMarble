@@ -6,6 +6,8 @@
 // @author       Yixuan (original script by Seris0, SwingTheVine)
 // @license      MPL-2.0
 // @icon         https://static.wikia.nocookie.net/zenless-zone-zero/images/e/e7/Agent_Yixuan_Trails_of_Ink_Circle_Icon.png/revision/latest?cb=20260221003818
+// @updateURL    https://raw.githubusercontent.com/TheEmac/YixuanMarble/master/yixuan-marble.user.js
+// @downloadURL  https://raw.githubusercontent.com/TheEmac/YixuanMarble/master/yixuan-marble.user.js
 // @match        *://*.wplace.live/*
 // @grant        GM_getResourceText
 // @grant        GM_getResourceURL
