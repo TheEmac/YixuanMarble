@@ -6524,7 +6524,7 @@
               "\n      background: #333;\n      color: white;\n      padding: 6px 14px;\n      border-radius: 6px;\n      font-size: 0.9em;\n      font-weight: bold;\n      text-align: center;\n      margin-bottom: 10px;\n    "));
           const R = document.createElement("div");
           R.style.cssText =
-            "\n      display: flex;\n      gap: 10px;\n      margin-bottom: 10px;\n    ";
+            "\n      display: flex;\n      gap: 10px;\n      margin-bottom: 6px;\n    ";
           const V = document.createElement("button");
           ((V.textContent = "Enable All"),
             (V.style.cssText =
@@ -6543,7 +6543,7 @@
             (bmEUB.id = "bm-enable-unlocked-btn"),
             (bmEUB.textContent = "Enable Unlocked Only"),
             (bmEUB.style.cssText =
-              "\n      background: #9c27b0;\n      color: white;\n      border: none;\n      padding: 6px 14px;\n      border-radius: 6px;\n      cursor: pointer;\n      width: 100%;\n      font-size: 0.9em;\n      margin-bottom: 4px;\n    "),
+              "\n      background: #9c27b0;\n      color: white;\n      border: none;\n      padding: 6px 14px;\n      border-radius: 6px;\n      cursor: pointer;\n      width: 100%;\n      font-size: 0.9em;\n      margin-bottom: 6px;\n    "),
             bmEUBVis || (bmEUB.style.display = "none"),
             R.appendChild(V),
             R.appendChild(H),
@@ -7251,20 +7251,19 @@
                 (bmEUB.style.transform = "scale(0.95)"),
                 (bmEUB.style.transition = "all 0.1s ease"));
               try {
-                // Track state before touching the picker
-                const existingBtn = document.querySelector("button.btn.relative.w-full");
-                const pickerWasOpen = !!(existingBtn && existingBtn.offsetParent !== null);
-                const unfoldBtn = document.querySelector("button.bottom-0");
-                const panelWasFolded = !!(unfoldBtn && unfoldBtn.offsetParent !== null &&
-                  unfoldBtn.querySelector("path")?.getAttribute("d")?.includes("480-120"));
+                // Track whether the color picker panel was already open
+                const pickerPanel = document.querySelector("div.absolute.bottom-0.left-0.z-50.w-full");
+                const pickerWasOpen = !!(pickerPanel && pickerPanel.offsetHeight > 0);
                 // Open game color picker if not visible
                 if (!pickerWasOpen) {
                   document.querySelector(".flex.gap-2.px-3 > .btn-circle")?.click();
                   await new Promise(r => setTimeout(r, 50));
                   document.querySelector(".btn.btn-primary.btn-lg.relative.z-30")?.click();
-                  await new Promise(r => setTimeout(r, 50));
+                  await new Promise(r => setTimeout(r, 300));
                 }
                 // Unfold colors panel if collapsed
+                const unfoldBtn = document.querySelector("button.bottom-0");
+                const panelWasFolded = !!(unfoldBtn && unfoldBtn.querySelector("path")?.getAttribute("d")?.includes("480-120"));
                 if (panelWasFolded) {
                   unfoldBtn.click();
                   await new Promise(r => setTimeout(r, 300));
@@ -7285,7 +7284,7 @@
                   document.querySelector("button.bottom-0")?.click();
                 }
                 if (!pickerWasOpen) {
-                  document.querySelector(".flex.gap-2.px-3 > .btn-circle")?.click();
+                  document.querySelector("div.absolute.bottom-0.left-0.z-50.w-full .relative.px-3 .btn-soft")?.click();
                 }
                 t.forEach((e) => {
                   const rgb = `${e.rgb[0]},${e.rgb[1]},${e.rgb[2]}`;
