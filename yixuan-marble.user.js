@@ -6534,13 +6534,22 @@
             (H.style.cssText =
               "\n      background: #f44336;\n      border: none;\n      color: white;\n      padding: 8px 16px;\n      border-radius: 6px;\n      cursor: pointer;\n      font-size: 0.9em;\n      white-space: nowrap;\n      flex: 1;\n    "));
           const U = document.createElement("button");
+          const bmEUB = document.createElement("button");
+          let bmEUBVis = true;
+          try { bmEUBVis = JSON.parse(localStorage.getItem("bmShowEnableUnlockedBtn") ?? "true"); } catch {}
           ((U.textContent = "Disable all Enhanced"),
             (U.style.cssText =
               "\n      background: #6c757d;\n      color: white;\n      border: none;\n      padding: 6px 14px;\n      border-radius: 6px;\n      cursor: pointer;\n      width: 100%;\n      font-size: 0.9em;\n    "),
+            (bmEUB.id = "bm-enable-unlocked-btn"),
+            (bmEUB.textContent = "Enable Unlocked Only"),
+            (bmEUB.style.cssText =
+              "\n      background: #9c27b0;\n      color: white;\n      border: none;\n      padding: 6px 14px;\n      border-radius: 6px;\n      cursor: pointer;\n      width: 100%;\n      font-size: 0.9em;\n      margin-bottom: 4px;\n    "),
+            bmEUBVis || (bmEUB.style.display = "none"),
             R.appendChild(V),
             R.appendChild(H),
             J.appendChild(B),
             J.appendChild(R),
+            J.appendChild(bmEUB),
             J.appendChild(U));
           const W = document.createElement("div");
           W.style.cssText =
@@ -7233,6 +7242,20 @@
                   }, 100),
                   console.error("Error disabling all enhanced colors:", t),
                   ye.Te("Failed to disable all enhanced colors"));
+              }
+            }),
+            (bmEUB.onclick = async () => {
+              (t.forEach((e) => {
+                !1 === e.free ? Q.Je(e.rgb) : Q.je(e.rgb);
+              }),
+                Oe(),
+                m.remove(),
+                ye.ze("Enabling unlocked colors only..."));
+              try {
+                (await De(), Te());
+              } catch (e) {
+                (console.error("Error enabling unlocked colors:", e),
+                  ye.Te("Failed to enable unlocked colors"));
               }
             }));
           const ne = document.createElement("div");
@@ -10173,6 +10196,7 @@
         Fn.appendChild(
           Gn("bmShowColorMenu", "Color Menu (Beta Test)", "bm-23"),
         ),
+        Fn.appendChild(Gn("bmShowEnableUnlockedBtn", "Enable Unlocked Btn", "bm-enable-unlocked-btn")),
         Dn.appendChild(_n),
         Dn.appendChild(Fn),
         In.appendChild(Dn),
