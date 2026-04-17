@@ -7251,22 +7251,23 @@
                 (bmEUB.style.transform = "scale(0.95)"),
                 (bmEUB.style.transition = "all 0.1s ease"));
               try {
+                // Track state before touching the picker
+                const existingBtn = document.querySelector("button.btn.relative.w-full");
+                const pickerWasOpen = !!(existingBtn && existingBtn.offsetParent !== null);
+                const unfoldBtn = document.querySelector("button.bottom-0");
+                const panelWasFolded = !!(unfoldBtn && unfoldBtn.offsetParent !== null &&
+                  unfoldBtn.querySelector("path")?.getAttribute("d")?.includes("480-120"));
                 // Open game color picker if not visible
-                let colorBtn = document.querySelector("button.btn.relative.w-full");
-                if (!colorBtn || colorBtn.offsetParent === null) {
+                if (!pickerWasOpen) {
                   document.querySelector(".flex.gap-2.px-3 > .btn-circle")?.click();
                   await new Promise(r => setTimeout(r, 50));
                   document.querySelector(".btn.btn-primary.btn-lg.relative.z-30")?.click();
                   await new Promise(r => setTimeout(r, 50));
                 }
                 // Unfold colors panel if collapsed
-                const unfoldBtn = document.querySelector("button.bottom-0");
-                if (unfoldBtn && unfoldBtn.offsetParent !== null) {
-                  const svgPath = unfoldBtn.querySelector("path");
-                  if (svgPath && svgPath.getAttribute("d")?.includes("480-120")) {
-                    unfoldBtn.click();
-                    await new Promise(r => setTimeout(r, 300));
-                  }
+                if (panelWasFolded) {
+                  unfoldBtn.click();
+                  await new Promise(r => setTimeout(r, 300));
                 }
                 // Build set of unlocked RGB strings from game color picker
                 const unlockedRgb = new Set();
@@ -7278,7 +7279,14 @@
                       unlockedRgb.add(`${match[0]},${match[1]},${match[2]}`);
                   }
                 }
-                if (unlockedRgb.size === 0) throw new Error("No unlocked colors found — is the color picker open?");
+                if (unlockedRgb.size === 0) throw new Error("No unlocked colors found");
+                // Restore picker state
+                if (panelWasFolded) {
+                  document.querySelector("button.bottom-0")?.click();
+                }
+                if (!pickerWasOpen) {
+                  document.querySelector(".flex.gap-2.px-3 > .btn-circle")?.click();
+                }
                 t.forEach((e) => {
                   const rgb = `${e.rgb[0]},${e.rgb[1]},${e.rgb[2]}`;
                   unlockedRgb.has(rgb) ? Q.Je(e.rgb) : Q.je(e.rgb);
