@@ -7284,7 +7284,9 @@
                   document.querySelector("button.bottom-0")?.click();
                 }
                 if (!pickerWasOpen) {
-                  document.querySelector("div.absolute.bottom-0.left-0.z-50.w-full .relative.px-3 .btn-soft")?.click();
+                  const closeBtn = Array.from(document.querySelectorAll("button.btn.btn-circle.btn-sm"))
+                    .find(b => b.querySelector('path[d*="m256-200"]'));
+                  closeBtn?.click();
                 }
                 t.forEach((e) => {
                   const rgb = `${e.rgb[0]},${e.rgb[1]},${e.rgb[2]}`;
