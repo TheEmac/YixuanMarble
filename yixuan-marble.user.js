@@ -7245,17 +7245,55 @@
               }
             }),
             (bmEUB.onclick = async () => {
-              (t.forEach((e) => {
-                !1 === e.free ? Q.Je(e.rgb) : Q.je(e.rgb);
-              }),
-                Oe(),
-                m.remove(),
-                ye.ze("Enabling unlocked colors only..."));
+              const _bg = bmEUB.style.background, _txt = bmEUB.textContent;
+              ((bmEUB.style.background = "#7b1fa2"),
+                (bmEUB.textContent = "Loading..."),
+                (bmEUB.style.transform = "scale(0.95)"),
+                (bmEUB.style.transition = "all 0.1s ease"));
               try {
-                (await De(), Te());
-              } catch (e) {
-                (console.error("Error enabling unlocked colors:", e),
-                  ye.Te("Failed to enable unlocked colors"));
+                // Open game color picker if not visible
+                let colorBtn = document.querySelector("button.btn.relative.w-full");
+                if (!colorBtn || colorBtn.offsetParent === null) {
+                  document.querySelector(".flex.gap-2.px-3 > .btn-circle")?.click();
+                  await new Promise(r => setTimeout(r, 50));
+                  document.querySelector(".btn.btn-primary.btn-lg.relative.z-30")?.click();
+                  await new Promise(r => setTimeout(r, 50));
+                }
+                // Unfold colors panel if collapsed
+                const unfoldBtn = document.querySelector("button.bottom-0");
+                if (unfoldBtn && unfoldBtn.offsetParent !== null) {
+                  const svgPath = unfoldBtn.querySelector("path");
+                  if (svgPath && svgPath.getAttribute("d")?.includes("480-120")) {
+                    unfoldBtn.click();
+                    await new Promise(r => setTimeout(r, 300));
+                  }
+                }
+                // Build set of unlocked RGB strings from game color picker
+                const unlockedRgb = new Set();
+                for (const b of document.querySelectorAll("button.btn.relative.w-full")) {
+                  if (b.children.length === 0) {
+                    const bg = window.getComputedStyle(b).backgroundColor;
+                    const match = bg.match(/\d+/g);
+                    if (match && match.length >= 3)
+                      unlockedRgb.add(`${match[0]},${match[1]},${match[2]}`);
+                  }
+                }
+                if (unlockedRgb.size === 0) throw new Error("No unlocked colors found — is the color picker open?");
+                t.forEach((e) => {
+                  const rgb = `${e.rgb[0]},${e.rgb[1]},${e.rgb[2]}`;
+                  unlockedRgb.has(rgb) ? Q.Je(e.rgb) : Q.je(e.rgb);
+                });
+                Oe();
+                m.remove();
+                ye.ze("Enabled unlocked colors only...");
+                await De();
+                Te();
+              } catch (err) {
+                (console.error("Error enabling unlocked colors:", err),
+                  ye.Te("Failed to enable unlocked colors"),
+                  (bmEUB.style.background = _bg),
+                  (bmEUB.textContent = _txt),
+                  (bmEUB.style.transform = "scale(1)"));
               }
             }));
           const ne = document.createElement("div");
