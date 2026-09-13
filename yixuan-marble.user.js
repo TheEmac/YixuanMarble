@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yixuan Marble
 // @namespace    yixuan-marble
-// @version      1.3.5
+// @version      1.3.6
 // @description  A userscript to automate and/or enhance the user experience on Wplace.live. Make sure to comply with the site's Terms of Service, and rules! This script is not affiliated with Wplace.live in any way, use at your own risk. This script is not affiliated with TamperMonkey. The author of this userscript is not responsible for any damages, issues, loss of data, or punishment that may occur as a result of using this script. This script is provided "as is" under the MPL-2.0 license. The "Blue Marble" icon is licensed under CC0 1.0 Universal (CC0 1.0) Public Domain Dedication. The image is owned by NASA. Originally created by Seris0 as "Skirk Marble".
 // @author       Yixuan (original script by Seris0, SwingTheVine)
 // @license      MPL-2.0
@@ -87,11 +87,74 @@
       }));
   }
   // Color match tolerance: pixels within this per-channel delta are considered identical.
+  // NOTE: this is a *fallback* only. Per-channel tolerance is unsafe on its own because
+  // the wplace palette contains pairs that sit exactly at the boundary -- Tan
+  // [156,132,107] and Stone [148,140,107] are a Chebyshev distance of exactly 8 apart,
+  // so a +-1 perturbation of either flips the match. Browsers that farble canvas
+  // readback (Brave's fingerprinting defense perturbs getImageData by +-1 per channel)
+  // therefore produce non-deterministic matches and mismatched per-color bookkeeping
+  // keys. Canonicalizing to the nearest palette entry removes the ambiguity entirely.
   const COLOR_TOLERANCE = 8;
-  const colorsMatch = (r1, g1, b1, r2, g2, b2) =>
-    Math.abs(r1 - r2) <= COLOR_TOLERANCE &&
-    Math.abs(g1 - g2) <= COLOR_TOLERANCE &&
-    Math.abs(b1 - b2) <= COLOR_TOLERANCE;
+
+  // Memoized raw RGB -> nearest-palette-color mapping. Keyed by packed 24-bit RGB,
+  // value is the packed 24-bit canonical RGB. Nearest-match (not first-within-
+  // tolerance) so boundary pairs like Tan/Stone always resolve to the same entry
+  // regardless of readback noise.
+  const _canonCache = new Map();
+  let _canonPalette = null;
+  function canonColor(r, g, b) {
+    const raw = (r << 16) | (g << 8) | b;
+    const hit = _canonCache.get(raw);
+    if (hit !== undefined) return hit;
+    if (!_canonPalette) {
+      try {
+        h();
+        _canonPalette = Array.isArray(l.l) ? l.l : null;
+      } catch (e) {}
+      if (!_canonPalette) return null;
+    }
+    let best = null,
+      bestD = Infinity;
+    for (const c of _canonPalette) {
+      const dr = r - c.rgb[0],
+        dg = g - c.rgb[1],
+        db = b - c.rgb[2],
+        d = dr * dr + dg * dg + db * db;
+      if (d < bestD) ((bestD = d), (best = c.rgb));
+    }
+    // Guard against snapping colors that are nowhere near the palette (site chrome,
+    // antialiased edges). 12 per channel squared-summed is a generous ceiling.
+    const packed = bestD <= 3 * 12 * 12 ? (best[0] << 16) | (best[1] << 8) | best[2] : raw;
+    // Templates hold ~76 distinct colors, but live-canvas readback can contain
+    // arbitrary values (overlays, antialiased edges), and farbling multiplies each
+    // one into a small cloud. Cap the memo so it cannot grow without bound.
+    if (_canonCache.size > 1 << 16) _canonCache.clear();
+    _canonCache.set(raw, packed);
+    return packed;
+  }
+  // Canonical "r,g,b" string, the key used for all per-color bookkeeping.
+  const canonKey = (r, g, b) => {
+    const p = canonColor(r, g, b);
+    return null === p
+      ? `${r},${g},${b}`
+      : `${(p >> 16) & 255},${(p >> 8) & 255},${p & 255}`;
+  };
+  // Two pixels are the same color if they canonicalize to the same palette entry.
+  // Falls back to per-channel tolerance only when the palette is not yet loaded.
+  const colorsMatch = (r1, g1, b1, r2, g2, b2) => {
+    if (r1 === r2 && g1 === g2 && b1 === b2) return !0;
+    const a = canonColor(r1, g1, b1),
+      c = canonColor(r2, g2, b2);
+    if (null !== a && null !== c) return a === c;
+    return (
+      Math.abs(r1 - r2) <= COLOR_TOLERANCE &&
+      Math.abs(g1 - g2) <= COLOR_TOLERANCE &&
+      Math.abs(b1 - b2) <= COLOR_TOLERANCE
+    );
+  };
+  // The "skip" sentinel (wplace's unset marker) must also survive farbled readback.
+  const isSkipColor = (r, g, b) =>
+    Math.abs(r - 222) <= 2 && Math.abs(g - 250) <= 2 && Math.abs(b - 206) <= 2;
   var e,
     n = Object.defineProperty,
     t = Object.getOwnPropertyNames,
@@ -1094,7 +1157,8 @@
               f = new Map();
             for (const e of this.disabledColors) {
               const [n, t, o] = e.split(",").map(Number),
-                a = (n << 16) | (t << 8) | o;
+                _c = canonColor(n, t, o),
+                a = null === _c ? (n << 16) | (t << 8) | o : _c;
               f.set(a, !0);
             }
             const expanded = this._disabledExpanded;
@@ -1105,9 +1169,10 @@
                 a = e / 4,
                 r = a % i,
                 s = Math.floor(a / i),
-                l = (n << 16) | (t << 8) | o;
+                _cl = canonColor(n, t, o),
+                l = null === _cl ? (n << 16) | (t << 8) | o : _cl;
               const c = expanded.size > 0 ? expanded.has(l) : f.has(l);
-              222 === n && 250 === t && 206 === o
+              isSkipColor(n, t, o)
                 ? (r + s) % 2 == 0
                   ? ((b[e] = 0),
                     (b[e + 1] = 0),
@@ -1149,13 +1214,10 @@
         this._disabledExpanded = new Set();
         for (const d of this.disabledColors) {
           const [cr, cg, cb] = d.split(",").map(Number);
-          for (let dr = -COLOR_TOLERANCE; dr <= COLOR_TOLERANCE; dr++)
-            for (let dg = -COLOR_TOLERANCE; dg <= COLOR_TOLERANCE; dg++)
-              for (let db = -COLOR_TOLERANCE; db <= COLOR_TOLERANCE; db++) {
-                const r = cr + dr, g = cg + dg, b = cb + db;
-                if (r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255)
-                  this._disabledExpanded.add((r << 16) | (g << 8) | b);
-              }
+          const c = canonColor(cr, cg, cb);
+          this._disabledExpanded.add(
+            null === c ? (cr << 16) | (cg << 8) | cb : c,
+          );
         }
       }
       je(e) {
@@ -1169,7 +1231,10 @@
         this._rebuildExpanded();
       }
       Be(e) {
-        return this._disabledExpanded.has((e[0] << 16) | (e[1] << 8) | e[2]);
+        const c = canonColor(e[0], e[1], e[2]);
+        return this._disabledExpanded.has(
+          null === c ? (e[0] << 16) | (e[1] << 8) | e[2] : c,
+        );
       }
       Re() {
         return Array.from(this.disabledColors);
@@ -2310,8 +2375,15 @@
                       f = c[u + 1],
                       h = c[u + 2];
                     if (c[u + 3] < 64) continue;
-                    if (222 === b && 250 === f && 206 === h) continue;
-                    const x = (b << 16) | (f << 8) | h;
+                    if (isSkipColor(b, f, h)) continue;
+                    // Key per-color stats by the CANONICAL palette color, not the raw
+                    // readback. Under farbled readback the raw value scatters across
+                    // several near-identical keys that never match the colorPalette
+                    // (Bn) keys built by ot(), which sends the lookup at the
+                    // "if (s[n])" branch below into its estimate fallback and invents
+                    // a remainder for a color that is fully painted.
+                    const _canon = canonColor(b, f, h);
+                    const x = null === _canon ? (b << 16) | (f << 8) | h : _canon;
                     let _ce = _colorMap.get(x);
                     if (!_ce) { _ce = { Ln: 0, required: 0, Fn: 0, Pn: null, Mc: 0, Mp: null }; _colorMap.set(x, _ce); }
                     _ce.required++;
@@ -2407,17 +2479,17 @@
                             i = n[a + 1],
                             l = n[a + 2],
                             c = n[a + 3],
-                            d = `${r},${i},${l}`,
+                            d = canonKey(r, i, l),
                             u = !!o?.jn && o.jn.has(d);
                           c >= 64 &&
                             u &&
-                            e.push({ x: s, y: p, color: `${m},${g},${b}` });
+                            e.push({ x: s, y: p, color: canonKey(m, g, b) });
                         } catch (e) {}
                         continue;
                       }
                       try {
                         const e = this._?.[0];
-                        if (e?.jn && !e.jn.has(`${m},${g},${b}`)) continue;
+                        if (e?.jn && !e.jn.has(canonKey(m, g, b))) continue;
                       } catch (e) {}
                       const h = 4 * (p * t + s),
                         x = n[h],
@@ -2429,15 +2501,15 @@
                           e.push({
                             x: s,
                             y: p,
-                            color: `${m},${g},${b}`,
+                            color: canonKey(m, g, b),
                             Jn: !0,
                           })
                         : colorsMatch(x, v, y, m, g, b)
-                          ? o.push({ x: s, y: p, color: `${m},${g},${b}` })
+                          ? o.push({ x: s, y: p, color: canonKey(m, g, b) })
                           : e.push({
                               x: s,
                               y: p,
-                              color: `${m},${g},${b}`,
+                              color: canonKey(m, g, b),
                               Jn: !1,
                             });
                     }
@@ -2763,14 +2835,14 @@
                 ),
                 u("[Enhanced Pixel Analysis] Template colorPalette:", r.Bn),
                 // Lazy restore: try GM storage synchronously here (sync context works; async import context does not)
-                (r.Bn && 0 !== Object.keys(r.Bn).length) || (() => { try { const _cpKey = `colorPalette_${r.C}`; const _cpRaw = GM_getValue(_cpKey, null); _plog(`[PERF] colorPalette lazy restore: "${_cpKey}" → ${_cpRaw ? `found (${_cpRaw.length} chars)` : 'NOT FOUND'}`); if (_cpRaw) { r.Bn = JSON.parse(_cpRaw); _plog(`[PERF] colorPalette restored (${Object.keys(r.Bn).length} colors) — ot() will be skipped`); } } catch (_e) { _pwarn('[PERF] lazy restore failed:', _e); } })(),
+                (r.Bn && 0 !== Object.keys(r.Bn).length) || (() => { try { const _cpKey = `colorPalette_v2_${r.C}`; const _cpRaw = GM_getValue(_cpKey, null); _plog(`[PERF] colorPalette lazy restore: "${_cpKey}" → ${_cpRaw ? `found (${_cpRaw.length} chars)` : 'NOT FOUND'}`); if (_cpRaw) { r.Bn = JSON.parse(_cpRaw); _plog(`[PERF] colorPalette restored (${Object.keys(r.Bn).length} colors) — ot() will be skipped`); } } catch (_e) { _pwarn('[PERF] lazy restore failed:', _e); } })(),
                 (r.Bn && 0 !== Object.keys(r.Bn).length) || (r.Bn = this.ot(r),
                   // Persist the freshly-built palette so ot() never runs again for
                   // this template. Write into the stored template JSON and save in the
                   // background so the next page load skips the expensive ot() scan.
                   (() => {
                     try {
-                      const _cpKey = `colorPalette_${r.C}`;
+                      const _cpKey = `colorPalette_v2_${r.C}`;
                       GM_setValue(_cpKey, JSON.stringify(r.Bn));
                       // Also update the template JSON store so the fallback path works too
                       const _tmKey = `${r.C} ${r.Ne}`;
@@ -2935,7 +3007,7 @@
               const r = 4 * (e * n.width + o);
               if (b[r + 3] > 0) {
                 w++;
-                const n = `${b[r]},${b[r + 1]},${b[r + 2]}`;
+                const n = canonKey(b[r], b[r + 1], b[r + 2]);
                 (k[n] || ((k[n] = 0), ($[n] = `(${o},${e})`)),
                   !a ||
                   t.enhancedColors.has(n) ||
@@ -2973,8 +3045,8 @@
                 i = b[r],
                 s = b[r + 1],
                 l = b[r + 2];
-              if (222 === i && 250 === s && 206 === l) continue;
-              const c = `${i},${s},${l}`;
+              if (isSkipColor(i, s, l)) continue;
+              const c = canonKey(i, s, l);
               (M[c] || (M[c] = { rt: 0, Ln: 0, it: 0 }), M[c].rt++, S++);
               let d = !1,
                 p = "no canvas data";
@@ -3052,7 +3124,6 @@
           const n = {};
           try {
             h();
-            const _namedColors = Array.isArray(l.l) ? l.l : null;
             const _tileCount = Object.keys(e.Oe || {}).length;
             _plog(`[PERF] ot() building palette from ${_tileCount} tile(s)`);
             for (const [t, o] of Object.entries(e.Oe || {})) {
@@ -3078,19 +3149,16 @@
                     s = a[r + 1],
                     l = a[r + 2];
                   if (a[r + 3] < 64) continue;
-                  if (222 === i && 250 === s && 206 === l) continue;
+                  if (isSkipColor(i, s, l)) continue;
                   const _rawKey = (i << 16) | (s << 8) | l;
                   let c = _colorCache.get(_rawKey);
                   if (c === undefined) {
-                    c = `${i},${s},${l}`;
-                    if (_namedColors) {
-                      for (const _col of _namedColors) {
-                        if (colorsMatch(i, s, l, _col.rgb[0], _col.rgb[1], _col.rgb[2])) {
-                          c = `${_col.rgb[0]},${_col.rgb[1]},${_col.rgb[2]}`;
-                          break;
-                        }
-                      }
-                    }
+                    // canonKey picks the NEAREST palette entry. The previous
+                    // first-within-COLOR_TOLERANCE scan mis-snapped Stone
+                    // [148,140,107] onto Tan [156,132,107] (they are exactly 8 apart,
+                    // and Tan is listed first), and flipped that decision whenever
+                    // readback noise pushed the delta to 9.
+                    c = canonKey(i, s, l);
                     _colorCache.set(_rawKey, c);
                   }
                   (n[c] || (n[c] = { count: 0, enabled: !0 }), n[c].count++);
@@ -3416,7 +3484,7 @@
                   a = p[t],
                   c = p[t + 1],
                   d = p[t + 2];
-                if (!(p[t + 3] < 64) && a === i && c === s && d === l) {
+                if (!(p[t + 3] < 64) && colorsMatch(a, c, d, i, s, l)) {
                   const o = m[t],
                     a = m[t + 1],
                     c = m[t + 2],
@@ -3676,7 +3744,7 @@
                   l.Xe(this.nn.templates[i].enhancedColors));
               // Restore cached color palette so ot() is skipped on this load.
               try {
-                const _cpKey = `colorPalette_${t}`;
+                const _cpKey = `colorPalette_v2_${t}`;
                 const _cpRaw = GM_getValue(_cpKey, null);
                 _plog(`[PERF] colorPalette restore: key="${_cpKey}" → ${_cpRaw ? `found (${_cpRaw.length} chars)` : 'NOT FOUND in GM storage'}`);
                 if (_cpRaw) {
@@ -7709,15 +7777,10 @@
                   const rgb = `${e.rgb[0]},${e.rgb[1]},${e.rgb[2]}`;
                   unlockedRgb.has(rgb) ? Q.Je(e.rgb) : Q.je(e.rgb);
                 });
-                // COLOR_TOLERANCE expansion from nearby locked colors can bleed into unlocked colors.
-                // Explicitly remove each unlocked color from the expanded disabled set.
-                if (Q._disabledExpanded) {
-                  t.forEach((e) => {
-                    const rgb = `${e.rgb[0]},${e.rgb[1]},${e.rgb[2]}`;
-                    if (unlockedRgb.has(rgb))
-                      Q._disabledExpanded.delete((e.rgb[0] << 16) | (e.rgb[1] << 8) | e.rgb[2]);
-                  });
-                }
+                // The old +-COLOR_TOLERANCE expansion could bleed nearby locked colors
+                // into unlocked ones, which needed an explicit re-removal pass here.
+                // _rebuildExpanded now stores one canonical entry per disabled color,
+                // so Q.Je()/Q.je() above already leave the set exact.
                 Oe();
                 m.remove();
                 ye.ze("Enabled unlocked colors only...");
