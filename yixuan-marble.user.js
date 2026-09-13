@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yixuan Marble
 // @namespace    yixuan-marble
-// @version      1.3.1
+// @version      1.3.5
 // @description  A userscript to automate and/or enhance the user experience on Wplace.live. Make sure to comply with the site's Terms of Service, and rules! This script is not affiliated with Wplace.live in any way, use at your own risk. This script is not affiliated with TamperMonkey. The author of this userscript is not responsible for any damages, issues, loss of data, or punishment that may occur as a result of using this script. This script is provided "as is" under the MPL-2.0 license. The "Blue Marble" icon is licensed under CC0 1.0 Universal (CC0 1.0) Public Domain Dedication. The image is owned by NASA. Originally created by Seris0 as "Skirk Marble".
 // @author       Yixuan (original script by Seris0, SwingTheVine)
 // @license      MPL-2.0
@@ -10,24 +10,83 @@
 // @downloadURL  https://raw.githubusercontent.com/TheEmac/YixuanMarble/master/yixuan-marble.user.js
 // @match        *://*.wplace.live/*
 // @grant        GM_getResourceText
-// @grant        GM_getResourceURL
 // @grant        GM_addStyle
 // @grant        GM.setValue
 // @grant        GM_getValue
+// @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @connect      nominatim.openstreetmap.org
 // @connect      wplace.live
 // @connect      wplace.lol
 // @resource     CSS-BM-File https://raw.githubusercontent.com/Seris0/Wplace-SkirkMarble/8999f928615ad5d37fba18429bbe43e9c63461ed/dist/SkirkMarble.user.css
-// @resource     YIXUAN-ICON  https://static.wikia.nocookie.net/zenless-zone-zero/images/e/e7/Agent_Yixuan_Trails_of_Ink_Circle_Icon.png/revision/latest?cb=20260221003818
 // ==/UserScript==
 
 // Wplace  --> https://wplace.live
 // License --> https://www.mozilla.org/en-US/MPL/2.0/
 
 (() => {
+  const _scriptStart = performance.now();
+  // Perf/pipeline instrumentation is gated behind the debug-logging flag so it
+  // does NOT run on every tile in production. The flag is cached (reading it
+  // hits GM/localStorage, which is too slow to do per-tile) and is refreshed
+  // when the debug toggle is saved (see saveDebugLoggingEnabled).
+  let _perfLogEnabled = false;
+  try { _perfLogEnabled = getDebugLoggingEnabled(); } catch (e) { _perfLogEnabled = false; }
+  // Gate ALL of this script's console output behind the debug-logging flag by
+  // shadowing `console` for the userscript's own scope only. The page's real
+  // console is captured first (via globalThis, never the bare identifier, to
+  // avoid the TDZ of the shadow below). The page-injected hooks (fetch / map
+  // observer) are stringified and re-evaluated in PAGE scope, so they keep the
+  // real console and are unaffected. `console.error` is intentionally left
+  // always-visible so genuine failures still surface when debug logging is off.
+  const _realConsole = (typeof globalThis !== "undefined" ? globalThis : window).console;
+  const _gate = (m) => (...a) => { if (_perfLogEnabled) { try { _realConsole[m]?.(...a); } catch (e) {} } };
+  const console = {
+    log: _gate("log"),
+    info: _gate("info"),
+    debug: _gate("debug"),
+    warn: _gate("warn"),
+    group: _gate("group"),
+    groupCollapsed: _gate("groupCollapsed"),
+    groupEnd: _gate("groupEnd"),
+    time: _gate("time"),
+    timeEnd: _gate("timeEnd"),
+    table: _gate("table"),
+    dir: _gate("dir"),
+    trace: _gate("trace"),
+    count: _gate("count"),
+    assert: _gate("assert"),
+    error: (...a) => { try { _realConsole.error(...a); } catch (e) {} },
+  };
+  const _plog = (...a) => { if (_perfLogEnabled) { try { console.log(...a); } catch (e) {} } };
+  const _pwarn = (...a) => { if (_perfLogEnabled) { try { console.warn(...a); } catch (e) {} } };
+  const _ptime = (l) => { if (_perfLogEnabled) { try { console.time(l); } catch (e) {} } };
+  const _ptimeEnd = (l) => { if (_perfLogEnabled) { try { console.timeEnd(l); } catch (e) {} } };
+  const _pgroup = (...a) => { if (_perfLogEnabled) { try { console.group(...a); } catch (e) {} } };
+  const _pgroupEnd = () => { if (_perfLogEnabled) { try { console.groupEnd(); } catch (e) {} } };
+  _ptime("[PERF] YixuanMarble total script init");
+  _plog("[PERF] YixuanMarble script starting...");
+  // The icon is embedded rather than pulled through GM_getResourceURL/@resource.
+  // That API hands back a blob:<extension-origin> URL which the page refuses to
+  // load (confirmed on Chrome/Tampermonkey on macOS), leaving a broken-image box
+  // in the header. A data: URI needs no network, no extension API and no CSP
+  // allowance, so it paints immediately with no broken-image flash. The remote
+  // URL is kept only as an error fallback.
+  const YIXUAN_ICON_REMOTE =
+    "https://static.wikia.nocookie.net/zenless-zone-zero/images/e/e7/Agent_Yixuan_Trails_of_Ink_Circle_Icon.png/revision/latest?cb=20260221003818";
+  const YIXUAN_ICON_EMBEDDED =
+    "data:image/png;base64,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";
+  const YIXUAN_ICON_URL = YIXUAN_ICON_EMBEDDED;
+  // Should the embedded copy ever fail to decode, fall back to the remote file
+  // once. Guarded so a failing fallback cannot loop.
+  function applyIconFallback(e) {
+    if (!e || e.bmIconFallback) return;
+    ((e.bmIconFallback = !0),
+      e.addEventListener("error", () => {
+        e.src !== YIXUAN_ICON_REMOTE && (e.src = YIXUAN_ICON_REMOTE);
+      }));
+  }
   // Color match tolerance: pixels within this per-channel delta are considered identical.
-  const YIXUAN_ICON_URL = (typeof GM_getResourceURL !== "undefined") ? GM_getResourceURL("YIXUAN-ICON") : "https://static.wikia.nocookie.net/zenless-zone-zero/images/e/e7/Agent_Yixuan_Trails_of_Ink_Circle_Icon.png/revision/latest?cb=20260221003818";
   const COLOR_TOLERANCE = 8;
   const colorsMatch = (r1, g1, b1, r2, g2, b2) =>
     Math.abs(r1 - r2) <= COLOR_TOLERANCE &&
@@ -94,6 +153,7 @@
       ("undefined" != typeof GM_setValue &&
         GM_setValue("bmDebugLoggingEnabled", n),
         localStorage.setItem("bmDebugLoggingEnabled", n));
+      _perfLogEnabled = !!e;
     } catch (e) {}
   }
   function u(...e) {
@@ -379,6 +439,8 @@
       (u("[Tile Cache] Invalidating cache due to visual settings change"), R());
   }
   function W(e) {
+    const _wmInit0 = performance.now();
+    _ptime("[PERF] W() TileManager init total");
     ((function () {
       C = (function () {
         try {
@@ -434,14 +496,26 @@
       $ ||
         (($ = e.D.bind(e)),
         (e.D = async function (e, n) {
+          const _tileKey = Array.isArray(n) ? n[0]+","+n[1] : n;
+          const _t0 = performance.now();
           const t = L(n, this._, e);
           if (!k && C) {
             const e = J(t);
-            if (e) return e;
+            if (e) {
+              const _dur = performance.now() - _t0;
+              if (_dur > 20) _pwarn(`[PERF] D() cache-hit slow for tile ${_tileKey}: ${_dur.toFixed(1)}ms`);
+              return e;
+            }
           }
+          const _fetchT0 = performance.now();
           const o = await $(e, n);
+          const _fetchDur = performance.now() - _fetchT0;
+          if (_fetchDur > 100) _pwarn(`[PERF] D() original fetch slow for tile ${_tileKey}: ${_fetchDur.toFixed(1)}ms`);
           if (!k && !S && C) {
+            const _storeT0 = performance.now();
             j(t, o);
+            const _storeDur = performance.now() - _storeT0;
+            if (_storeDur > 20) _pwarn(`[PERF] D() cache-store slow for tile ${_tileKey}: ${_storeDur.toFixed(1)}ms`);
             const e = Array.isArray(n)
               ? n[0].toString().padStart(4, "0") +
                 "," +
@@ -455,6 +529,8 @@
           return o;
         })),
       Y(e),
+      _ptimeEnd("[PERF] W() TileManager init total"),
+      _plog(`[PERF] W() TileManager init: ${(performance.now() - _wmInit0).toFixed(1)}ms`),
       u(
         "[Tile Manager] Initialized with cache and pause functionality. Paused:",
         k,
@@ -961,7 +1037,7 @@
           r = 0;
         const i = document.createElement("canvas");
         ((i.width = n), (i.height = t));
-        const s = i.getContext("2d");
+        const s = i.getContext("2d", { willReadFrequently: true });
         ((s.imageSmoothingEnabled = !1),
           e.canvas ? s.drawImage(e.canvas, 0, 0) : s.drawImage(e, 0, 0));
         const l = s.getImageData(0, 0, n, t).data;
@@ -1164,7 +1240,7 @@
           try {
             const e = document.createElement("canvas");
             ((e.width = o.width), (e.height = o.height));
-            const a = e.getContext("2d");
+            const a = e.getContext("2d", { willReadFrequently: true });
             ((a.imageSmoothingEnabled = !1), a.drawImage(o, 0, 0));
             const r = a.getImageData(0, 0, e.width, e.height),
               i = r.data,
@@ -1174,7 +1250,7 @@
               d = new Set();
             let p = 0,
               m = 0;
-            console.group(
+            _pgroup(
               "🔍 [TEMPLATE DETECTION] Scanning ALL template pixels (old logic)",
             );
             for (let e = 0; e < l; e++)
@@ -1186,7 +1262,7 @@
                     (m++, d.add(`${n},${e}`), d.size <= 5) &&
                     (c[t], c[t + 1], c[t + 2]));
               }
-            (u(`Template pixels found: ${d.size}`), console.groupEnd());
+            (u(`Template pixels found: ${d.size}`), _pgroupEnd());
             let g = 0,
               b = 0,
               f = 0;
@@ -1266,7 +1342,7 @@
                         "⚠️ [BORDER ISSUE] Borders enabled but none applied! Template might not have diagonal space.",
                       )
                     : u("Crosshairs applied successfully"),
-              console.groupEnd(),
+              _pgroupEnd(),
               a.putImageData(r, 0, 0));
             const x = await createImageBitmap(e);
             n.set(t, x);
@@ -1297,7 +1373,7 @@
         return { name: "Red", rgb: [255, 0, 0], alpha: 255 };
       }
       Qe() {
-        console.group("🔲 [BORDER SETTING] Loading border configuration");
+        _pgroup("🔲 [BORDER SETTING] Loading border configuration");
         try {
           let e = null,
             n = "none";
@@ -1495,6 +1571,18 @@
           blobData: s,
           blink: l,
         } = e.data;
+        if (a === "blue-marble" && r && e.data.jsonData) {
+          const name = r
+            .split("?")[0]
+            .split("/")
+            .filter((x) => x && isNaN(Number(x)))
+            .filter((x) => x && !x.includes("."))
+            .pop();
+          if (name === "me") {
+            window.__bmSawMe = !0;
+            window.__bmLastMe = { endpoint: r, jsonData: e.data.jsonData };
+          }
+        }
         if (
           (Date.now(), console.groupEnd(), "blue-marble" == a && i && s && !r)
         ) {
@@ -1522,7 +1610,13 @@
           "*",
         );
       const c = i.headers.get("content-type") || "";
-      if (c.includes("application/json"))
+      if (c.includes("application/json")) {
+        try {
+          const e = new URL(s, location.href);
+          (e.hostname.endsWith("wplace.live") &&
+            e.hostname !== location.hostname &&
+            (window.__bmApiOrigin = e.origin));
+        } catch (e) {}
         i.json()
           .then((e) => {
             window.postMessage(
@@ -1533,7 +1627,7 @@
           .catch((e) => {
             console.error(`%c${n}%c: Failed to parse JSON: `, t, "", e);
           });
-      else if (
+      } else if (
         c.includes("image/") &&
         !s.includes("openfreemap") &&
         !s.includes("maps")
@@ -1572,12 +1666,24 @@
       }
       return a;
     };
+    const kickMe = (e) => {
+      if (window.__bmSawMe || e > 3) return;
+      const n = window.__bmApiOrigin || "https://backend.wplace.live";
+      (window.fetch(`${n}/me`, { credentials: "include" }).catch(() => {}),
+        setTimeout(() => kickMe(e + 1), 3e3));
+    };
+    setTimeout(() => kickMe(1), 1500);
   });
+  const _cssT0 = performance.now();
   var he = GM_getResourceText("CSS-BM-File");
+  const _cssLoadDur = performance.now() - _cssT0;
+  _plog(`[PERF] GM_getResourceText("CSS-BM-File"): ${_cssLoadDur.toFixed(1)}ms (${he ? he.length + " chars" : "null/empty"})`);
+  const _styleT0 = performance.now();
   (GM_addStyle(he),
     GM_addStyle(
       "\n#yixuan-search-draggable {\n  position: fixed; z-index: 2147483646;\n  top: 50%; left: 50%; transform: translate(-50%, -50%);\n  width: min(480px,94vw); max-height: min(70vh, 600px);\n  background: rgba(30, 41, 59, 0.92); color: #f1f5f9; border-radius: 14px;\n  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);\n  border: 1px solid #334155;\n  backdrop-filter: blur(14px);\n  font: 14px/1.5 Roboto Mono, monospace, Arial;\n  display: none;\n  flex-direction: column;\n  min-width: 300px;\n  will-change: transform;\n  overflow: hidden;\n}\n#yixuan-search-draggable .drag-handle {\n  margin-bottom: 0.4em;\n  background: linear-gradient(135deg, rgba(71,85,105,0.6), rgba(100,116,139,0.55));\n  cursor: grab;\n  width: 100%;\n  height: 28px;\n  border-radius: 14px 14px 0 0;\n  opacity: 0.95;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n}\n#yixuan-search-draggable.dragging .drag-handle {\n  cursor: grabbing;\n}\n#yixuan-search-draggable .drag-handle::before {\n  content: '';\n  width: 56px;\n  height: 6px;\n  border-radius: 6px;\n  background: linear-gradient(90deg, #94a3b8, #cbd5e1);\n  opacity: 0.7;\n}\n#yixuan-search-draggable .hdr {\n  display: flex; align-items: center; justify-content: space-between;\n  padding: 12px 16px 0 16px;\n}\n#yixuan-search-draggable .hdr h3 {\n  margin: 0; font-size: 18px; font-weight: 800; letter-spacing: 0.04em;\n  display: flex; align-items: center; gap: 0.6em;\n  color: #f8fafc;\n}\n#yixuan-search-draggable .hdr .actions {\n  display: flex; gap: 8px;\n}\n#yixuan-search-draggable .hdr button {\n  border: 1px solid #475569; padding: 8px 10px; border-radius: 8px;\n  background: #334155; color: #f1f5f9; font: 13px monospace;\n  cursor: pointer;\n  transition: all 0.18s ease;\n}\n#yixuan-search-draggable .hdr button:hover { \n  background: #475569; \n  transform: translateY(-1px);\n}\n#yixuan-search-draggable .hdr button:active { \n  background: #334155; \n  transform: translateY(0px);\n}\n#yixuan-search-draggable .body {\n  padding: 12px 16px 16px 16px; overflow: hidden;\n}\n#yixuan-search-input {\n  width: 100%; padding: 12px 14px; border-radius: 10px;\n  border: 1px solid #475569; background: #0b1222;\n  color: #f1f5f9; font: 14px monospace;\n  margin-bottom: 12px;\n  transition: all 0.2s ease;\n}\n#yixuan-search-input:focus { \n  outline: none;\n  border-color: #3b82f6;\n  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);\n}\n#yixuan-search-input::placeholder { color: #64748b; }\n#yixuan-search-results {\n  max-height: 360px; overflow-y: auto; overflow-x: hidden;\n}\n#yixuan-search-results::-webkit-scrollbar {\n  width: 6px;\n}\n#yixuan-search-results::-webkit-scrollbar-track {\n  background: #0f172a;\n  border-radius: 3px;\n}\n#yixuan-search-results::-webkit-scrollbar-thumb {\n  background: #475569;\n  border-radius: 3px;\n}\n#yixuan-search-results::-webkit-scrollbar-thumb:hover {\n  background: #64748b;\n}\n.yixuan-search-result {\n  padding: 12px; cursor: pointer;\n  border: 1px solid transparent;\n  border-radius: 10px;\n  transition: all 0.2s ease;\n  position: relative;\n  display: flex;\n  justify-content: space-between;\n  align-items: flex-start;\n  gap: 8px;\n  overflow: hidden;\n}\n.yixuan-search-result:hover {\n  background-color: rgba(51, 65, 85, 0.55);\n  border-color: #334155;\n  transform: translateX(2px);\n}\n.yixuan-result-content {\n  flex: 1; min-width: 0; overflow: hidden;\n}\n.yixuan-result-name {\n  font-size: 15px;\n  color: #f1f5f9;\n  margin-bottom: 4px;\n  font-weight: 700;\n}\n.yixuan-result-address {\n  font-size: 12px;\n  color: #94a3b8;\n  line-height: 1.3; overflow-wrap: anywhere; word-break: break-word;\n}\n.yixuan-result-address.secondary {\n  color: #cbd5e1;\n  font-weight: 500;\n}\n.yixuan-favorite-star {\n  color: #64748b;\n  font-size: 18px;\n  cursor: pointer;\n  padding: 6px;\n  border-radius: 6px;\n  transition: all 0.2s ease;\n  user-select: none;\n  margin-left: 8px;\n}\n.yixuan-favorite-star:hover {\n  color: #fbbf24;\n  background: rgba(251, 191, 36, 0.1);\n  transform: scale(1.1);\n}\n.yixuan-favorite-star.favorited {\n  color: #fbbf24;\n}\n.yixuan-loading, .yixuan-no-results {\n  padding: 20px;\n  text-align: center;\n  color: #64748b;\n  font-size: 14px;\n}\n.yixuan-icon {\n  display: inline-block; height: 2em; margin-right: 1ch; vertical-align: middle;\n}\n\n/* Favorites Menu */\n#yixuan-favorites-menu {\n  border-top: 1px solid #334155;\n  margin-top: 12px;\n  padding-top: 12px;\n}\n#yixuan-favorites-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-bottom: 8px;\n  padding: 0 2px;\n}\n#yixuan-favorites-title {\n  font-size: 13px;\n  font-weight: 700;\n  color: #cbd5e1;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  transition: color 0.2s;\n}\n#yixuan-favorites-title:hover {\n  color: #f1f5f9;\n}\n#yixuan-favorites-toggle {\n  font-size: 10px;\n  transition: transform 0.2s;\n}\n#yixuan-favorites-toggle.collapsed {\n  transform: rotate(-90deg);\n}\n#yixuan-favorites-count {\n  background: #475569;\n  color: #f1f5f9;\n  border-radius: 10px;\n  padding: 2px 6px;\n  font-size: 11px;\n  font-weight: 500;\n}\n#yixuan-clear-favorites {\n  background: none;\n  border: 1px solid #475569;\n  color: #cbd5e1;\n  cursor: pointer;\n  font-size: 11px;\n  padding: 4px 8px;\n  border-radius: 6px;\n  transition: all 0.2s ease;\n}\n#yixuan-clear-favorites:hover {\n  color: #ef4444;\n  background: rgba(239, 68, 68, 0.1);\n}\n#yixuan-favorites-list {\n  max-height: 200px;\n  overflow-y: auto;\n}\n.yixuan-favorites-filter {\n  width: 100%;\n  padding: 8px 10px;\n  border-radius: 8px;\n  border: 1px solid #475569;\n  background: #0b1222;\n  color: #f1f5f9;\n  font: 12px monospace;\n  margin: 8px 0 6px 0;\n  transition: all 0.2s ease;\n}\n.yixuan-favorites-filter:focus {\n  outline: none;\n  border-color: #3b82f6;\n  box-shadow: 0 0 0 3px rgba(59,130,246,0.12);\n}\n.yixuan-favorite-item {\n  padding: 10px;\n  cursor: pointer;\n  border-radius: 8px;\n  margin-bottom: 4px;\n  transition: all 0.2s ease;\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n}\n.yixuan-favorite-item:hover {\n  background: rgba(51, 65, 85, 0.55);\n}\n.yixuan-favorite-item .yixuan-result-content {\n  flex: 1;\n}\n.yixuan-favorite-item .yixuan-result-name {\n  font-size: 13px;\n  margin-bottom: 2px;\n}\n.yixuan-favorite-item .yixuan-result-address {\n  font-size: 11px;\n}\n.yixuan-favorite-remove {\n  color: #94a3b8;\n  font-size: 14px;\n  cursor: pointer;\n  padding: 4px 6px;\n  border-radius: 6px;\n  transition: all 0.2s ease;\n}\n.yixuan-favorite-remove:hover {\n  color: #ef4444;\n  background: rgba(239, 68, 68, 0.1);\n}\n\n/* Custom Location Modal */\n#yixuan-location-modal {\n  position: fixed;\n  top: 0; left: 0; right: 0; bottom: 0;\n  background: rgba(0, 0, 0, 0.7);\n  z-index: 2147483647;\n  display: none;\n  align-items: center;\n  justify-content: center;\n}\n#yixuan-location-dialog {\n  background: rgba(30,41,59,0.96);\n  color: #f1f5f9;\n  border-radius: 14px;\n  border: 1px solid #334155;\n  padding: 20px;\n  min-width: 420px;\n  max-width: 90vw;\n  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.05);\n  backdrop-filter: blur(12px);\n}\n#yixuan-location-dialog h3 {\n  margin: 0 0 16px 0;\n  color: #f1f5f9;\n  font-size: 18px;\n}\n#yixuan-location-dialog .form-group {\n  margin-bottom: 16px;\n}\n#yixuan-location-dialog label {\n  display: block;\n  margin-bottom: 4px;\n  color: #cbd5e1;\n  font-size: 14px;\n  font-weight: 500;\n}\n#yixuan-location-dialog input {\n  width: 100%;\n  padding: 10px 12px;\n  border: 1px solid #475569;\n  background: #0b1222;\n  color: #f1f5f9;\n  border-radius: 10px;\n  font: 14px monospace;\n  transition: all 0.2s ease;\n}\n#yixuan-location-dialog input:focus {\n  outline: none;\n  border-color: #3b82f6;\n  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);\n}\n#yixuan-location-dialog input[readonly] {\n  background: #0a0e1a;\n  border-color: #374151;\n  color: #9ca3af;\n  cursor: not-allowed;\n}\n#yixuan-location-dialog input[readonly]:focus {\n  border-color: #374151;\n  box-shadow: none;\n}\n#yixuan-location-dialog .button-group {\n  display: flex;\n  gap: 8px;\n  justify-content: flex-end;\n  margin-top: 20px;\n}\n#yixuan-location-dialog button {\n  padding: 10px 16px;\n  border: 1px solid #475569;\n  border-radius: 8px;\n  font: 14px monospace;\n  cursor: pointer;\n  transition: all 0.2s ease;\n}\n#yixuan-location-dialog .btn-primary {\n  background: #3b82f6;\n  color: #fff;\n}\n#yixuan-location-dialog .btn-primary:hover {\n  background: #2563eb;\n}\n#yixuan-location-dialog .btn-secondary {\n  background: #334155;\n  color: #f1f5f9;\n}\n#yixuan-location-dialog .btn-secondary:hover {\n  background: #475569;\n}\n\n\n",
     ));
+  _plog(`[PERF] GM_addStyle(s) took ${(performance.now() - _styleT0).toFixed(1)}ms`);
   var xe = document.createElement("link");
   ((xe.href =
     "https://fonts.googleapis.com/css2?family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap"),
@@ -1638,6 +1744,7 @@
             (this.bn = 0),
             (this.fn = !0),
             (this.hn = !1),
+            (this.Pn = !1),
             (this.xn = !0),
             (this.vn = !0),
             (this.yn = !1),
@@ -1809,6 +1916,7 @@
         }
         async D(e, n) {
           if (!this.Mn) return e;
+          const _tileT0 = performance.now();
           const t = this.Ie * this.un;
           u(
             `Searching for templates in tile: "${(n = n[0].toString().padStart(4, "0") + "," + n[1].toString().padStart(4, "0"))}"`,
@@ -1904,16 +2012,19 @@
             ) {
               (u("Using enhanced/filtered path"),
                 u(`Template bitmap size: ${t.In.width}x${t.In.height}`));
+              const _tileRenderT0 = performance.now();
               const e = document.createElement("canvas");
               ((e.width = t.In.width), (e.height = t.In.height));
-              const n = e.getContext("2d");
+              const n = e.getContext("2d", { willReadFrequently: true });
               ((n.imageSmoothingEnabled = !1), n.drawImage(t.In, 0, 0));
+              const _gidTmplT0 = performance.now();
               const o = n.getImageData(0, 0, e.width, e.height),
                 a = o.data,
                 d = e.width,
                 p = e.height,
                 m = c ? new Uint8ClampedArray(a) : null,
                 g = c ? new Set() : null;
+              _plog(`[PIPELINE]   getImageData(template ${d}x${p}): ${(performance.now()-_gidTmplT0).toFixed(1)}ms`);
               let b = null;
               if ((c && (b = l.getImageData(0, 0, s.width, s.height).data), i))
                 for (let e = 0; e < p; e++)
@@ -1926,10 +2037,11 @@
                     0 !== a[t + 3] &&
                       (r.Be([o, i, s])
                         ? (a[t + 3] = 0)
-                        : c && r.Ye([o, i, s]) && g.add(`${n},${e}`));
+                        : c && r.Ye([o, i, s]) && g.add((e << 16) | n));
                   }
               else if (c) {
                 u("Scanning for enhanced template pixels...");
+                const _scanT0 = performance.now();
                 let e = 0;
                 for (let n = 0; n < p; n++)
                   for (let t = 0; t < d; t++) {
@@ -1939,9 +2051,10 @@
                       const a = m[o],
                         i = m[o + 1],
                         s = m[o + 2];
-                      r.Ye([a, i, s]) && (g.add(`${t},${n}`), e++);
+                      r.Ye([a, i, s]) && (g.add((n << 16) | t), e++);
                     }
                   }
+                _plog(`[PIPELINE]   enhanced pixel scan (${d}x${p}): ${(performance.now()-_scanT0).toFixed(1)}ms → ${e} enhanced px`);
                 u(`Found ${e} enhanced pixels`);
               }
               if (c && g && g.size > 0)
@@ -1972,7 +2085,7 @@
                     i.length > 15e3 &&
                       u(`Scanning ${i.length} pixels for wrong colors`);
                     for (const e of i) {
-                      const [t, a] = e.split(",").map(Number),
+                      const t = e & 0xFFFF, a = e >> 16,
                         i = 4 * (a * d + t),
                         l = m[i],
                         c = m[i + 1],
@@ -2024,7 +2137,7 @@
                         `Processing ${Math.floor(t / f) + 1}/${Math.ceil(w.length / f)} (${Math.round((t / w.length) * 100)}%)`,
                       );
                     for (const t of l) {
-                      const [i, l] = t.split(",").map(Number),
+                      const i = t & 0xFFFF, l = t >> 16,
                         c = h.has(t);
                       {
                         let placed = false;
@@ -2127,6 +2240,7 @@
                   }
                   (u(`Applied ${e} crosshairs and ${y} borders`),
                     this.kn && x > 0 && u(`Enhanced ${x} wrong color pixels`));
+                  _plog(`[PIPELINE]   crosshair/border application: ${(performance.now()-_tileRenderT0).toFixed(1)}ms total for this template slice`);
                 }
               (n.putImageData(o, 0, 0),
                 l.drawImage(
@@ -2143,9 +2257,10 @@
                 ));
           }
           if (a.length > 0) {
+            const _freshT0 = performance.now();
             let o = 0,
               r = 0,
-              i = 0;
+              _req = 0;
             try {
               const s = n.split(","),
                 l = parseInt(s[0]),
@@ -2153,15 +2268,17 @@
                 d = `${l},${c}`;
               let p;
               {
-                const n = await createImageBitmap(e),
+                const _liveBitmapT0 = performance.now();
+                const n = i,
                   o = document.createElement("canvas");
                 ((o.width = t), (o.height = t));
-                const a = o.getContext("2d", { Ge: !0 });
+                const a = o.getContext("2d", { willReadFrequently: true });
                 ((a.imageSmoothingEnabled = !1),
                   a.clearRect(0, 0, t, t),
                   a.drawImage(n, 0, 0, t, t),
                   (p = a.getImageData(0, 0, t, t)),
                   u(`[Fresh Analysis] Using fresh tile data for ${d}`));
+                _plog(`[PIPELINE]   fresh-analysis: createImageBitmap+getImageData(live ${t}x${t}): ${(performance.now()-_liveBitmapT0).toFixed(1)}ms`);
               }
               const m = p.data;
               u(
@@ -2169,45 +2286,62 @@
               );
               const g = {};
               for (const e of a) {
+                const _sliceT0 = performance.now();
                 const n = e.In.width,
                   a = e.In.height,
                   s = document.createElement("canvas");
                 ((s.width = n), (s.height = a));
-                const l = s.getContext("2d", { Ge: !0 });
+                const l = s.getContext("2d", { willReadFrequently: true });
                 ((l.imageSmoothingEnabled = !1), l.drawImage(e.In, 0, 0));
-                const c = l.getImageData(0, 0, n, a).data,
+                const c = l.getImageData(0, 0, n, a).data;
+                _plog(`[PIPELINE]   fresh-analysis: getImageData(template slice ${n}x${a}): ${(performance.now()-_sliceT0).toFixed(1)}ms`);
+                const
                   d = Number(e.Dn[0]) * this.un,
                   p = Number(e.Dn[1]) * this.un;
-                for (let e = 0; e < a; e++)
-                  for (let a = 0; a < n; a++) {
-                    if (a % this.un !== 1 || e % this.un !== 1) continue;
+                const _colorMap = new Map();
+                for (let e = 1; e < a; e += this.un) {
+                  const _rowOff = e * n;
+                  for (let a = 1; a < n; a += this.un) {
                     const s = a + d,
                       l = e + p;
                     if (s < 0 || l < 0 || s >= t || l >= t) continue;
-                    const u = 4 * (e * n + a),
+                    const u = 4 * (_rowOff + a),
                       b = c[u],
                       f = c[u + 1],
                       h = c[u + 2];
                     if (c[u + 3] < 64) continue;
                     if (222 === b && 250 === f && 206 === h) continue;
-                    const x = `${b},${f},${h}`;
-                    (g[x] || (g[x] = { Ln: 0, required: 0, Fn: 0, Pn: null }),
-                      g[x].required++,
-                      i++);
+                    const x = (b << 16) | (f << 8) | h;
+                    let _ce = _colorMap.get(x);
+                    if (!_ce) { _ce = { Ln: 0, required: 0, Fn: 0, Pn: null, Mc: 0, Mp: null }; _colorMap.set(x, _ce); }
+                    _ce.required++;
+                    _req++;
                     const v = 4 * (l * t + s),
                       y = m[v],
                       w = m[v + 1],
                       k = m[v + 2];
-                    if (m[v + 3] < 64);
-                    else if (colorsMatch(y, w, k, b, f, h)) (o++, g[x].Ln++);
-                    else if ((r++, g[x].Fn++, !g[x].Pn)) {
+                    if (m[v + 3] < 64) {
+                      if ((_ce.Mc++, !_ce.Mp)) {
+                        const e = Math.floor(s / this.un),
+                          n = Math.floor(l / this.un);
+                        _ce.Mp = [e, n];
+                      }
+                    }
+                    else if (colorsMatch(y, w, k, b, f, h)) { o++; _ce.Ln++; }
+                    else if ((r++, _ce.Fn++, !_ce.Pn)) {
                       const e = Math.floor(s / this.un),
                         n = Math.floor(l / this.un);
-                      g[x].Pn = [e, n];
+                      _ce.Pn = [e, n];
                     }
                   }
+                }
+                for (const [_ik, _iv] of _colorMap) {
+                  const _b = (_ik >> 16) & 0xFF, _f = (_ik >> 8) & 0xFF, _h = _ik & 0xFF;
+                  g[`${_b},${_f},${_h}`] = _iv;
+                }
+                _plog(`[PIPELINE]   fresh-analysis: pixel-compare loop (${n}x${a}): ${(performance.now()-_sliceT0).toFixed(1)}ms`);
               }
-              this.mn.set(n, { Ln: o, required: i, Fn: r, _n: g });
+              this.mn.set(n, { Ln: o, required: _req, Fn: r, _n: g });
               const b = `lastProgress_${l}_${c}`,
                 f = this[b] || { Ln: 0, required: 0, Fn: 0 },
                 h = o - f.Ln,
@@ -2217,15 +2351,16 @@
                 u(`   Painted: ${h > 0 ? "+" : ""}${h} (${f.Ln} → ${o})`),
                 u(`   ❌ Wrong: ${x > 0 ? "+" : ""}${x} (${f.Fn} → ${r})`),
                 u(`   Net Progress: ${h - x} pixels`)),
-                (this[b] = { Ln: o, required: i, Fn: r }),
-                u(`[Tile Progress] ${n}: ${o}/${i} painted, ${r} wrong`));
-              const v = i - o;
+                (this[b] = { Ln: o, required: _req, Fn: r }),
+                u(`[Tile Progress] ${n}: ${o}/${_req} painted, ${r} wrong`));
+              const v = _req - o;
               u(
                 `[Crosshair Debug] Missing: ${v}, Wrong: ${r}, Total problems: ${v + r}`,
               );
             } catch (e) {
               console.warn("Failed to compute tile progress stats:", e);
             }
+            _plog(`[PIPELINE] ── fresh-analysis total for tile: ${(performance.now()-_freshT0).toFixed(1)}ms ──`);
           }
           if (this.hn && a.length > 0)
             try {
@@ -2234,7 +2369,7 @@
                 const o = await createImageBitmap(e),
                   a = document.createElement("canvas");
                 ((a.width = t), (a.height = t));
-                const r = a.getContext("2d", { Ge: !0 });
+                const r = a.getContext("2d", { willReadFrequently: true });
                 ((r.imageSmoothingEnabled = !1),
                   r.clearRect(0, 0, t, t),
                   r.drawImage(o, 0, 0, t, t),
@@ -2246,7 +2381,7 @@
                 for (const r of a) {
                   const a = r.In.width,
                     i = r.In.height,
-                    s = new OffscreenCanvas(a, i).getContext("2d", { Ge: !0 });
+                    s = new OffscreenCanvas(a, i).getContext("2d", { willReadFrequently: true });
                   ((s.imageSmoothingEnabled = !1),
                     s.clearRect(0, 0, a, i),
                     s.drawImage(r.In, 0, 0));
@@ -2330,30 +2465,44 @@
                     l.fillRect(e - o, n - o, this.un, this.un);
                   }
                 }
+                if (this.Pn) {
+                  for (const { x: n, y: t, color: o } of e) {
+                    if (s(o)) continue;
+                    (l.fillStyle = `rgb(${o})`), l.fillRect(n, t, 1, 1);
+                  }
+                }
               }
             } catch (e) {
               console.warn("Failed to render error map overlay:", e);
             }
-          return await new Promise((e, n) => {
+          const _blobT0 = performance.now();
+          const _result = await new Promise((e, n) => {
             s.convertToBlob
-              ? s.convertToBlob({ type: "image/png" }).then(e).catch(n)
-              : s.toBlob(e, "image/png");
+              ? s.convertToBlob({ type: "image/webp", quality: 1.0 }).then(e).catch(n)
+              : s.toBlob(e, "image/webp", 1.0);
           });
+          _plog(`[PIPELINE] ── D() tile "${n}" total: ${(performance.now()-_tileT0).toFixed(1)}ms [webp-blob=${(performance.now()-_blobT0).toFixed(1)}ms] ──`);
+          return _result;
         }
         Rn(e) {
+          const _rnT0 = performance.now();
           u("Importing JSON...");
           const n = [
             "YixuanMarble",
             "BlueMarble",
             this.name?.replace(" ", ""),
           ].filter(Boolean);
-          n.includes(e?.whoami)
-            ? (u("Calling #parseBlueMarble..."), s(this, de, ue).call(this, e))
-            : console.warn("❌ Not a valid BlueMarble JSON:", {
-                whoami: e?.whoami,
-                Vn: n,
-                Hn: !!e?.templates,
-              });
+          if (n.includes(e?.whoami)) {
+            u("Calling #parseBlueMarble...");
+            s(this, de, ue).call(this, e);
+            _plog(`[PIPELINE] Rn()/parseBlueMarble: ${(performance.now()-_rnT0).toFixed(1)}ms → ${Object.keys(e?.templates || {}).length} templates`);
+          } else {
+            console.warn("❌ Not a valid BlueMarble JSON:", {
+              whoami: e?.whoami,
+              Vn: n,
+              Hn: !!e?.templates,
+            });
+          }
         }
         Un(e) {
           this.Mn = e;
@@ -2422,6 +2571,8 @@
               "No template available for color filter update",
             );
           const n = this._[e];
+          const _qn0 = performance.now();
+          _ptime("[PERF] Qn() template save");
           try {
             if (
               (u(
@@ -2434,11 +2585,16 @@
               this.nn.templates[e] &&
                 ((this.nn.templates[e].disabledColors = n.Re()),
                 (this.nn.templates[e].enhancedColors = n.qe()),
+                n.Bn && Object.keys(n.Bn).length > 0 &&
+                  (this.nn.templates[e].colorPalette = n.Bn),
                 u(
                   "JSON updated with new filter settings (settings only, tiles unchanged)",
                 ));
             }
+            const _serT0 = performance.now();
             (await s(this, de, pe).call(this),
+              _ptimeEnd("[PERF] Qn() template save"),
+              _plog(`[PERF] Qn() total: ${(performance.now() - _qn0).toFixed(1)}ms, storage write: ${(performance.now() - _serT0).toFixed(1)}ms`),
               u("Template color filter settings updated successfully"));
           } catch (e) {
             throw (
@@ -2460,6 +2616,8 @@
           return this._ && this._[e] ? this._[e].Re() : [];
         }
         tt(e = 0, n = !0) {
+          const _tt0 = performance.now();
+          _ptime("[PERF] tt() pixel analysis");
           u(
             "[Enhanced Pixel Analysis] Starting calculation for template index:",
             e,
@@ -2604,7 +2762,24 @@
                   `[Real Color Stats] Found ${Object.keys(s).length} colors with precise data`,
                 ),
                 u("[Enhanced Pixel Analysis] Template colorPalette:", r.Bn),
-                (r.Bn && 0 !== Object.keys(r.Bn).length) || (r.Bn = this.ot(r)),
+                // Lazy restore: try GM storage synchronously here (sync context works; async import context does not)
+                (r.Bn && 0 !== Object.keys(r.Bn).length) || (() => { try { const _cpKey = `colorPalette_${r.C}`; const _cpRaw = GM_getValue(_cpKey, null); _plog(`[PERF] colorPalette lazy restore: "${_cpKey}" → ${_cpRaw ? `found (${_cpRaw.length} chars)` : 'NOT FOUND'}`); if (_cpRaw) { r.Bn = JSON.parse(_cpRaw); _plog(`[PERF] colorPalette restored (${Object.keys(r.Bn).length} colors) — ot() will be skipped`); } } catch (_e) { _pwarn('[PERF] lazy restore failed:', _e); } })(),
+                (r.Bn && 0 !== Object.keys(r.Bn).length) || (r.Bn = this.ot(r),
+                  // Persist the freshly-built palette so ot() never runs again for
+                  // this template. Write into the stored template JSON and save in the
+                  // background so the next page load skips the expensive ot() scan.
+                  (() => {
+                    try {
+                      const _cpKey = `colorPalette_${r.C}`;
+                      GM_setValue(_cpKey, JSON.stringify(r.Bn));
+                      // Also update the template JSON store so the fallback path works too
+                      const _tmKey = `${r.C} ${r.Ne}`;
+                      if (this.nn && this.nn.templates && this.nn.templates[_tmKey]) {
+                        this.nn.templates[_tmKey].colorPalette = r.Bn;
+                      }
+                      _plog(`[PERF] colorPalette cached for template "${r.displayName}" (${Object.keys(r.Bn).length} colors) — GM key="${_cpKey}", templateJSON updated`);
+                    } catch (_e) { console.warn("Failed to cache colorPalette:", _e); }
+                  })()),
                 r.Bn && Object.keys(r.Bn).length > 0)
               )
                 for (const [n, a] of Object.entries(r.Bn)) {
@@ -2685,10 +2860,19 @@
                   `   Total painted: ${t}/${o} (${o > 0 ? Math.round((t / o) * 100) : 0}%)`,
                 ),
                   u(`   Wrong pixels: ${i}`));
+              const _ttDur = performance.now() - _tt0;
+              _ptimeEnd("[PERF] tt() pixel analysis");
+              _plog(`[PERF] tt() tile-progress path done in ${_ttDur.toFixed(1)}ms (${this.mn.size} tiles aggregated)`);
               return e;
             }
+            const _ttFbDur = performance.now() - _tt0;
+            _ptimeEnd("[PERF] tt() pixel analysis");
+            _plog(`[PERF] tt() falling back to ct() after ${_ttFbDur.toFixed(1)}ms (no tileProgress data)`);
             return this.ct(r);
           } catch (e) {
+            const _ttErrDur = performance.now() - _tt0;
+            _ptimeEnd("[PERF] tt() pixel analysis");
+            _plog(`[PERF] tt() errored after ${_ttErrDur.toFixed(1)}ms`);
             return (
               console.error("❌ [Enhanced Pixel Analysis] Analysis failed:", e),
               this.ct(r)
@@ -2696,6 +2880,7 @@
           }
         }
         dt(e, n, t, o, a) {
+          const _dt0 = performance.now();
           const r = e.split(",").map(Number),
             [i, s, l, c] = r,
             d = l - t.coords[2],
@@ -2713,10 +2898,13 @@
             u(` [Tile Analysis] Canvas total size: ${o.width}x${o.height}`));
           const m = document.createElement("canvas");
           ((m.width = n.width), (m.height = n.height));
-          const g = m.getContext("2d");
+          const g = m.getContext("2d", { willReadFrequently: true });
           ((g.imageSmoothingEnabled = !1), g.drawImage(n, 0, 0));
-          const b = g.getImageData(0, 0, n.width, n.height).data,
-            f = o.getContext("2d", { Ge: !0 }),
+          const _gid1T0 = performance.now();
+          const b = g.getImageData(0, 0, n.width, n.height).data;
+          const _gid1Dur = performance.now() - _gid1T0;
+          if (_gid1Dur > 5) _pwarn(`[PERF] dt() getImageData(template tile ${n.width}x${n.height}) took ${_gid1Dur.toFixed(1)}ms`);
+          const f = o.getContext("2d", { willReadFrequently: true }),
             h = Math.min(n.width, o.width - d),
             x = Math.min(n.height, o.height - p);
           if (h <= 0 || x <= 0)
@@ -2726,7 +2914,10 @@
               ),
               { ut: {}, gt: 0, bt: 0, ft: 0 }
             );
-          const v = f.getImageData(d, p, h, x).data,
+          const _gid2T0 = performance.now();
+          const v = f.getImageData(d, p, h, x).data;
+          const _gid2Dur = performance.now() - _gid2T0;
+          if (_gid2Dur > 5) _pwarn(`[PERF] dt() getImageData(live canvas ${h}x${x}) took ${_gid2Dur.toFixed(1)}ms`);
             y = new Set();
           let w = 0,
             k = {},
@@ -2738,6 +2929,7 @@
                 " [Enhanced Detection] Enhanced colors list:",
                 Array.from(t.enhancedColors),
               ));
+          const _loop1T0 = performance.now();
           for (let e = 0; e < n.height; e++)
             for (let o = 0; o < n.width; o++) {
               const r = 4 * (e * n.width + o);
@@ -2760,6 +2952,9 @@
                       ));
               }
             }
+          const _loop1Dur = performance.now() - _loop1T0;
+          _plog(`[PIPELINE]   scan loop (${n.width}x${n.height}=${(n.width*n.height).toLocaleString()} px): ${_loop1Dur.toFixed(1)}ms → ${y.size} enhanced px`);
+          if (_loop1Dur > 10) _pwarn(`[PERF] dt() enhanced-pixel scan loop (${n.width}x${n.height}=${n.width*n.height} px) took ${_loop1Dur.toFixed(1)}ms`);
           u(" [Enhanced Detection] Enhanced pixels by color:");
           for (const [e, n] of Object.entries(k))
             n > 0 && u(`   ${e}: ${n} pixels (first at ${$[e]})`);
@@ -2768,6 +2963,7 @@
           let S = 0,
             C = 0,
             T = 0;
+          const _loop2T0 = performance.now();
           for (let e = 0; e < n.height; e += this.un)
             for (let t = 0; t < n.width; t += this.un) {
               const o = t + 1,
@@ -2826,6 +3022,12 @@
                       `[Enhanced Logic] CROSSHAIR DECISION: Pixel (${o},${a}) will get crosshair because it's not correctly painted`,
                     ));
             }
+          const _loop2Dur = performance.now() - _loop2T0;
+          _plog(`[PIPELINE]   canvas-compare loop: ${_loop2Dur.toFixed(1)}ms → ${T} need crosshair`);
+          if (_loop2Dur > 10) _pwarn(`[PERF] dt() canvas-compare loop took ${_loop2Dur.toFixed(1)}ms`);
+          const _dtTot = performance.now() - _dt0;
+          _plog(`[PIPELINE] ── dt() tile ${e} (${n.width}x${n.height}): ${_dtTot.toFixed(1)}ms [gid1=${_gid1Dur.toFixed(1)}ms, gid2=${_gid2Dur.toFixed(1)}ms, scan=${_loop1Dur.toFixed(1)}ms, compare=${_loop2Dur.toFixed(1)}ms] ──`);
+          if (_dtTot > 30) _pwarn(`[PERF] dt() total for tile ${e} (${n.width}x${n.height}): ${_dtTot.toFixed(1)}ms [getImageData1=${_gid1Dur.toFixed(1)}ms, getImageData2=${_gid2Dur.toFixed(1)}ms, loop1=${_loop1Dur.toFixed(1)}ms, loop2=${_loop2Dur.toFixed(1)}ms]`);
           (u(
             ` [Tile Analysis] Results: ${S} analyzed, ${C} painted, ${T} need crosshair`,
           ),
@@ -2845,36 +3047,57 @@
           return { ut: M, gt: S, bt: C, ft: T };
         }
         ot(e) {
+          const _ot0 = performance.now();
+          _ptime("[PERF] ot() color-palette build");
           const n = {};
           try {
             h();
             const _namedColors = Array.isArray(l.l) ? l.l : null;
+            const _tileCount = Object.keys(e.Oe || {}).length;
+            _plog(`[PERF] ot() building palette from ${_tileCount} tile(s)`);
             for (const [t, o] of Object.entries(e.Oe || {})) {
+              const _ot_tile0 = performance.now();
               const e = document.createElement("canvas");
               ((e.width = o.width), (e.height = o.height));
-              const t = e.getContext("2d", { Ge: !0 });
+              const t = e.getContext("2d", { willReadFrequently: true });
               ((t.imageSmoothingEnabled = !1), t.drawImage(o, 0, 0));
+              const _gidT0 = performance.now();
               const a = t.getImageData(0, 0, o.width, o.height).data;
-              for (let e = 0; e < o.height; e++)
-                for (let t = 0; t < o.width; t++) {
-                  if (t % this.un !== 1 || e % this.un !== 1) continue;
+              const _gidDur = performance.now() - _gidT0;
+              if (_gidDur > 5) _pwarn(`[PERF] ot() getImageData(${o.width}x${o.height}) took ${_gidDur.toFixed(1)}ms`);
+              const _pixLoopT0 = performance.now();
+              // Memoize raw→canonical color mapping so we only run the 64-color
+              // linear search once per unique observed RGB value rather than once
+              // per pixel. Templates typically contain only ~13 distinct colors,
+              // so the cache reaches 100% hit rate after the first few pixels.
+              const _colorCache = new Map();
+              for (let e = 1; e < o.height; e += this.un)
+                for (let t = 1; t < o.width; t += this.un) {
                   const r = 4 * (e * o.width + t),
                     i = a[r],
                     s = a[r + 1],
                     l = a[r + 2];
                   if (a[r + 3] < 64) continue;
                   if (222 === i && 250 === s && 206 === l) continue;
-                  let c = `${i},${s},${l}`;
-                  if (_namedColors) {
-                    for (const _col of _namedColors) {
-                      if (colorsMatch(i, s, l, _col.rgb[0], _col.rgb[1], _col.rgb[2])) {
-                        c = `${_col.rgb[0]},${_col.rgb[1]},${_col.rgb[2]}`;
-                        break;
+                  const _rawKey = (i << 16) | (s << 8) | l;
+                  let c = _colorCache.get(_rawKey);
+                  if (c === undefined) {
+                    c = `${i},${s},${l}`;
+                    if (_namedColors) {
+                      for (const _col of _namedColors) {
+                        if (colorsMatch(i, s, l, _col.rgb[0], _col.rgb[1], _col.rgb[2])) {
+                          c = `${_col.rgb[0]},${_col.rgb[1]},${_col.rgb[2]}`;
+                          break;
+                        }
                       }
                     }
+                    _colorCache.set(_rawKey, c);
                   }
                   (n[c] || (n[c] = { count: 0, enabled: !0 }), n[c].count++);
                 }
+              const _pixLoopDur = performance.now() - _pixLoopT0;
+              const _tileDur = performance.now() - _ot_tile0;
+              if (_tileDur > 20) _pwarn(`[PERF] ot() tile ${o.width}x${o.height} took ${_tileDur.toFixed(1)}ms [getImageData=${_gidDur.toFixed(1)}ms, pixelLoop=${_pixLoopDur.toFixed(1)}ms, colorCache=${_colorCache.size} unique, colors so far=${Object.keys(n).length}]`);
             }
             for (const [e, t] of Object.entries(n))
               u(`   ${e}: ${t.count} pixels`);
@@ -2884,6 +3107,8 @@
               e,
             );
           }
+          _ptimeEnd("[PERF] ot() color-palette build");
+          _plog(`[PERF] ot() total: ${(performance.now() - _ot0).toFixed(1)}ms — found ${Object.keys(n).length} colors`);
           return n;
         }
         ct(e) {
@@ -3002,7 +3227,8 @@
           return this.kn;
         }
         Tt(e) {
-          this.hn = !!e;
+          const n = "number" == typeof e ? e : e ? 1 : 0;
+          ((this.hn = n >= 1), (this.Pn = n >= 2));
         }
         zt() {
           return this.hn;
@@ -3107,7 +3333,7 @@
                 l = [s[2], s[3]],
                 c = document.createElement("canvas");
               ((c.width = n.width), (c.height = n.height));
-              const d = c.getContext("2d");
+              const d = c.getContext("2d", { willReadFrequently: true });
               ((d.imageSmoothingEnabled = !1), d.drawImage(n, 0, 0));
               const p = d.getImageData(0, 0, n.width, n.height).data;
               for (let e = 0; e < n.height; e++)
@@ -3176,11 +3402,11 @@
             const [i, s, l] = e.split(",").map(Number),
               c = document.createElement("canvas");
             ((c.width = o.width), (c.height = o.height));
-            const d = c.getContext("2d");
+            const d = c.getContext("2d", { willReadFrequently: true });
             ((d.imageSmoothingEnabled = !1), d.drawImage(o, 0, 0));
             const p = d.getImageData(0, 0, o.width, o.height).data,
               m = t
-                .getContext("2d", { Ge: !0 })
+                .getContext("2d", { willReadFrequently: true })
                 .getImageData(a[0], a[1], o.width, o.height).data;
             let g = 0;
             for (let e = 0; e < o.height; e++)
@@ -3405,6 +3631,7 @@
               wn: n.wn ?? this.wn ?? !1,
               kn: n.kn ?? this.kn ?? !1,
               tiles: n.tiles || {},
+              ...(n.colorPalette && Object.keys(n.colorPalette).length > 0 ? { colorPalette: n.colorPalette } : {}),
             };
             try {
               const e = this.nn.templates[i].name,
@@ -3421,7 +3648,7 @@
                 try {
                   const e = document.createElement("canvas");
                   ((e.width = r.width), (e.height = r.height));
-                  const n = e.getContext("2d");
+                  const n = e.getContext("2d", { willReadFrequently: true });
                   ((n.imageSmoothingEnabled = !1), n.drawImage(r, 0, 0));
                   const t = n.getImageData(0, 0, e.width, e.height).data;
                   for (let n = 0; n < e.height; n++)
@@ -3447,6 +3674,20 @@
                   l.Ve(this.nn.templates[i].disabledColors),
                 Array.isArray(this.nn.templates[i].enhancedColors) &&
                   l.Xe(this.nn.templates[i].enhancedColors));
+              // Restore cached color palette so ot() is skipped on this load.
+              try {
+                const _cpKey = `colorPalette_${t}`;
+                const _cpRaw = GM_getValue(_cpKey, null);
+                _plog(`[PERF] colorPalette restore: key="${_cpKey}" → ${_cpRaw ? `found (${_cpRaw.length} chars)` : 'NOT FOUND in GM storage'}`);
+                if (_cpRaw) {
+                  l.Bn = JSON.parse(_cpRaw);
+                  _plog(`[PERF] colorPalette restored from GM storage for "${e}" (${Object.keys(l.Bn).length} colors) — ot() will be skipped`);
+                } else if (this.nn.templates[i].colorPalette &&
+                    Object.keys(this.nn.templates[i].colorPalette).length > 0) {
+                  l.Bn = this.nn.templates[i].colorPalette;
+                  _plog(`[PERF] colorPalette restored from template JSON for "${e}" (${Object.keys(l.Bn).length} colors) — ot() will be skipped`);
+                }
+              } catch (_cpErr) { _pwarn("[PERF] Failed to restore colorPalette:", _cpErr); }
               const c = this._.findIndex((e) => `${e.C} ${e.Ne}` === i);
               (u(
                 `Import - Template "${e}" - sortID: ${l.C}, authorID: "${l.Ne}", newKey: "${i}"`,
@@ -3764,11 +4005,19 @@
         );
       }
       const a = Math.floor(o / 1e3),
-        r = Math.floor(a / 3600),
+        w = Math.floor(a / 604800),
+        dd = Math.floor((a % 604800) / 86400),
+        r = Math.floor((a % 86400) / 3600),
         i = Math.floor((a % 3600) / 60),
         s = a % 60;
-      let l = "";
-      l = r > 0 ? `${r}h ${i}m ${s}s` : i > 0 ? `${i}m ${s}s` : `${s}s`;
+      const parts = [];
+      if (w > 0) parts.push(`${w}w`);
+      if (parts.length || dd > 0) parts.push(`${dd}d`);
+      if (parts.length || r > 0) parts.push(`${r}h`);
+      if (parts.length || i > 0) parts.push(`${i}m`);
+      parts.push(`${s}s`);
+      const l = parts.join(" ");
+      const label = a >= 86400 ? "Full in" : "Full Charge in";
       const d = Math.min(Math.floor(n.max - o / n.cooldownMs), n.max),
         p = `${d}/${n.max}`;
       const fullAt = new Date(Date.now() + o);
@@ -3778,7 +4027,7 @@
       });
       e.pe(
         "bm-2",
-        `Full Charge in <b style="color: #f59e0b;">${l}</b> <span style="color: #6b7280; font-size: 0.9em;">(${p})</span><br><span style="color: #6b7280; font-size: 0.85em;">Full at: ${fullAtStr}</span>`,
+        `${label} <b style="color: #f59e0b;">${l}</b> <span style="color: #6b7280; font-size: 0.9em;">(${p})</span><br><span style="color: #6b7280; font-size: 0.85em;">Full at: ${fullAtStr}</span>`,
       );
       try {
         const e = JSON.parse(
@@ -3884,6 +4133,7 @@
       })(),
     ),
     (async function () {
+      const _pipe = { t0: performance.now() };
       try {
         u("Starting storage migration and validation...");
         let e = null,
@@ -3894,17 +4144,23 @@
           r = !1;
         try {
           if ("undefined" != typeof GM && GM.getValue) {
+            const _chunkCountT0 = performance.now();
             const n = await GM.getValue("bmTemplates_chunkCount", 0);
+            _plog(`[PIPELINE] GM.getValue(chunkCount): ${(performance.now()-_chunkCountT0).toFixed(1)}ms → ${n} chunks`);
             if (n > 0) {
               u(`Loading ${n} TM chunks...`);
               let t = "",
                 o = 0;
+              const _chunksT0 = performance.now();
               for (let e = 0; e < n; e++) {
+                const _ct0 = performance.now();
                 const a = await GM.getValue(`bmTemplates_part_${e}`, "");
+                _plog(`[PIPELINE]   chunk[${e}]: ${(performance.now()-_ct0).toFixed(1)}ms (${a ? a.length : 0} chars)`);
                 a
                   ? (t += a)
                   : (o++, console.warn(`⚠️ Missing TM chunk ${e}/${n}`));
               }
+              _plog(`[PIPELINE] All ${n} TM chunks read: ${(performance.now()-_chunksT0).toFixed(1)}ms total`);
               o > 0
                 ? (console.error(
                     `❌ TM data corruption: ${o}/${n} chunks missing`,
@@ -3945,6 +4201,7 @@
         } catch (n) {
           (console.error("❌ TM check failed:", n), (e = null));
         }
+        const _lsT0 = performance.now();
         try {
           const e = parseInt(
             localStorage.getItem("bmTemplates_chunkCount") || "0",
@@ -3974,6 +4231,8 @@
         } catch (e) {
           (console.error("❌ LS check failed:", e), (n = null));
         }
+        _plog(`[PIPELINE] LS read: ${(performance.now()-_lsT0).toFixed(1)}ms`);
+        const _validateT0 = performance.now();
         let i = !1,
           s = !1;
         if (e)
@@ -4000,6 +4259,7 @@
           } catch (e) {
             (console.error("❌ LS data is not valid JSON:", e), (n = null));
           }
+        _plog(`[PIPELINE] JSON validation: ${(performance.now()-_validateT0).toFixed(1)}ms`);
         if (
           (!i &&
             e &&
@@ -4065,17 +4325,35 @@
             }
           }
         u("Storage migration completed");
+        const _migrationTotal = performance.now() - _pipe.t0;
+        _pipe.migrationMs = _migrationTotal;
+        _plog(`[PIPELINE] ── Migration total: ${_migrationTotal.toFixed(1)}ms ──`);
+        // Return the canonical data string so the template loader can skip re-reading it.
+        // When LS was newer and synced into TM (o > t), n is now in TM; otherwise e is canonical.
+        return (i && s && o > t) ? n : i ? e : s ? n : null;
       } catch (e) {
         console.error("❌ Storage migration failed:", e);
+        return null;
       }
     })()
-      .then(() =>
+      .then((preloadedTmData) =>
         (async function () {
+          const _loaderT0 = performance.now();
           let e = {},
             n = "none";
           u("Loading templates from storage...");
           try {
-            if ("undefined" != typeof GM && GM.getValue) {
+            if (preloadedTmData && preloadedTmData !== "{}" && preloadedTmData !== "") {
+              const _cacheParseT0 = performance.now();
+              u(`Using pre-loaded data from migration: ${preloadedTmData.length} chars`);
+              if ((e = JSON.parse(preloadedTmData)), !e || "object" != typeof e)
+                throw new Error("Invalid pre-loaded template structure");
+              e.templates || (e.templates = {});
+              n = "TamperMonkey (migration cache)";
+              const _cacheParseMs = performance.now() - _cacheParseT0;
+              _plog(`[PIPELINE] JSON.parse(migration cache, ${preloadedTmData.length} chars): ${_cacheParseMs.toFixed(1)}ms → ${Object.keys(e.templates || {}).length} templates`);
+              u(`Migration-cached templates: ${Object.keys(e.templates || {}).length} templates`);
+            } else if ("undefined" != typeof GM && GM.getValue) {
               const t = await GM.getValue("bmTemplates_chunkCount", 0);
               let o;
               if (t > 0) {
@@ -4265,18 +4543,31 @@
             }
           }
           try {
-            (we.Rn(e),
-              u(`Templates imported successfully from ${n}`),
+            const _importT0 = performance.now();
+            we.Rn(e);
+            const _importMs = performance.now() - _importT0;
+            const _loaderMs = performance.now() - _loaderT0;
+            _plog(`[PIPELINE] we.Rn() template import: ${_importMs.toFixed(1)}ms`);
+            _plog(`[PIPELINE] ── Loader total: ${_loaderMs.toFixed(1)}ms ──`);
+            (u(`Templates imported successfully from ${n}`),
               u(
                 0 === t
                   ? "ℹ️ No templates loaded - start by creating a new template"
                   : `Loaded ${t} templates from ${n}`,
               ),
               setTimeout(() => {
-                (sn(),
-                  ln(!0, !0),
-                  u("Color Menu initialized after template load"));
-              }, 500));
+                const _menuT0 = performance.now();
+                sn();
+                const _snMs = performance.now() - _menuT0;
+                const _lnT0 = performance.now();
+                ln(!0, !0);
+                const _lnMs = performance.now() - _lnT0;
+                const _menuMs = performance.now() - _menuT0;
+                _plog(`[PIPELINE] sn() cache clear: ${_snMs.toFixed(1)}ms`);
+                _plog(`[PIPELINE] ln() color menu render: ${_lnMs.toFixed(1)}ms`);
+                _plog(`[PIPELINE] ── Color Menu init total: ${_menuMs.toFixed(1)}ms ──`);
+                u("Color Menu initialized after template load");
+              }, 0));
           } catch (e) {
             console.error("Template import failed:", e);
             try {
@@ -4299,6 +4590,13 @@
       )
       .catch((e) => console.error("Template loading failed:", e)),
     (function () {
+      const loadMenuMinimized = () => {
+        try { return JSON.parse(localStorage.getItem("bmMenuMinimized") ?? "false"); }
+        catch { return false; }
+      };
+      const saveMenuMinimized = (v) => {
+        try { localStorage.setItem("bmMenuMinimized", JSON.stringify(v)); } catch {}
+      };
       let e = !1;
       ye.ne({ id: "bm--", style: "top: 10px; right: 75px;" })
         .ne({ id: "bm-z" })
@@ -4312,8 +4610,10 @@
             style: "cursor: pointer; width: 42px; height: 42px;",
           },
           (n, t) => {
+            applyIconFallback(t);
             t.addEventListener("click", () => {
               e = !e;
+              saveMenuMinimized(e);
               const o = document.querySelector("#bm--"),
                 a = document.querySelector("#bm-z"),
                 r = document.querySelector("#bm-V"),
@@ -4469,6 +4769,7 @@
                   ? "Blue Marble Icon - Minimized (Click to maximize)"
                   : "Blue Marble Icon - Maximized (Click to minimize)"));
             });
+            if (loadMenuMinimized() !== e) setTimeout(() => t.click(), 0);
           },
         )
         .Z()
@@ -5736,6 +6037,14 @@
     }, 100),
     Se(y()),
     ke.Ht(ye),
+    setTimeout(() => {
+      const e = unsafeWindow.__bmLastMe;
+      e &&
+        window.postMessage(
+          { source: "blue-marble", endpoint: e.endpoint, jsonData: e.jsonData },
+          "*",
+        );
+    }, 0),
     new MutationObserver((e, n) => {
       const t = document.querySelector("#color-1");
       if (!t) return;
@@ -5788,18 +6097,19 @@
         (t.title = "View Wrong Pixels Coordinates"),
         (t.onclick = function () {
           !(function (e) {
-            const n = [];
             if (!we || !we.mn || 0 === we.mn.size)
               return void e.Te(
                 "No tile data available. Please load a template first!",
               );
+            const wrongList = [],
+              missingList = [];
             for (const [e, t] of we.mn.entries())
-              if (t.Fn > 0 && t._n) {
+              if (t._n) {
                 const [o, a] = e.split(",").map(Number);
-                for (const [e, r] of Object.entries(t._n))
+                for (const [e, r] of Object.entries(t._n)) {
                   r.Fn > 0 &&
                     r.Pn &&
-                    n.push({
+                    wrongList.push({
                       Qt: o,
                       eo: a,
                       no: e,
@@ -5808,12 +6118,45 @@
                       ao: r.Pn[0],
                       ro: r.Pn[1],
                     });
+                  r.Mc > 0 &&
+                    r.Mp &&
+                    missingList.push({
+                      Qt: o,
+                      eo: a,
+                      no: e,
+                      oo: r.Mc,
+                      En: `${o}, ${a}`,
+                      ao: r.Mp[0],
+                      ro: r.Mp[1],
+                    });
+                }
               }
-            if (0 === n.length)
+            if (0 === wrongList.length && 0 === missingList.length)
               return void e.ze(
-                "🎉 No wrong pixels found! All pixels match the template!",
+                "🎉 No problems found! All pixels match the template and are placed!",
               );
-            n.sort((e, n) => n.oo - e.oo);
+            wrongList.sort((e, n) => n.oo - e.oo);
+            missingList.sort((e, n) => n.oo - e.oo);
+            const tabs = {
+              wrong: {
+                label: "Wrong Pixels",
+                list: wrongList,
+                itemLabel: "wrong pixel",
+                emptyText: "🎉 No wrong pixels found here!",
+              },
+              missing: {
+                label: "Not Placed",
+                list: missingList,
+                itemLabel: "not placed pixel",
+                emptyText: "🎉 Nothing left to place here!",
+              },
+            };
+            let activeTab = localStorage.getItem("bmWrongPixelsTab");
+            if ("wrong" !== activeTab && "missing" !== activeTab) activeTab = "wrong";
+            if (0 === tabs[activeTab].list.length) {
+              const otherTab = "wrong" === activeTab ? "missing" : "wrong";
+              tabs[otherTab].list.length > 0 && (activeTab = otherTab);
+            }
             const t = document.createElement("div");
             ((t.id = "bm-1G"),
               (t.style.cssText =
@@ -5825,9 +6168,8 @@
             a.style.cssText =
               "\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    padding: 14px 16px 12px 16px;\n    border-bottom: 1px solid #334155;\n    background: linear-gradient(135deg, #1e293b, #293548);\n  ";
             const r = document.createElement("h3");
-            ((r.textContent = `Wrong Pixels (${n.length} locations)`),
-              (r.style.cssText =
-                "\n    margin: 0;\n    font-size: 1.2em;\n    font-weight: 700;\n    background: linear-gradient(135deg, #f87171, #ef4444);\n    -webkit-background-clip: text;\n    -webkit-text-fill-color: transparent;\n    background-clip: text;\n  "));
+            r.style.cssText =
+              "\n    margin: 0;\n    font-size: 1.2em;\n    font-weight: 700;\n    background: linear-gradient(135deg, #f87171, #ef4444);\n    -webkit-background-clip: text;\n    -webkit-text-fill-color: transparent;\n    background-clip: text;\n  ";
             const i = document.createElement("button");
             ((i.textContent = "×"),
               (i.className = "bm-2n"),
@@ -5836,6 +6178,19 @@
               (i.onclick = () => document.body.removeChild(t)),
               a.appendChild(r),
               a.appendChild(i));
+            const tabBar = document.createElement("div");
+            tabBar.style.cssText =
+              "\n    display: flex;\n    gap: 8px;\n    padding: 10px 16px;\n    border-bottom: 1px solid #334155;\n    background: #1e293b;\n  ";
+            const tabBtnCss =
+              "\n    flex: 1;\n    padding: 7px 10px;\n    border: 1px solid #475569;\n    border-radius: 8px;\n    cursor: pointer;\n    font-size: 0.85em;\n    font-weight: 600;\n    transition: all 0.15s ease;\n  ";
+            const wrongTabBtn = document.createElement("button");
+            const missingTabBtn = document.createElement("button");
+            ((wrongTabBtn.textContent = `Wrong Pixels (${wrongList.length})`),
+              (missingTabBtn.textContent = `Not Placed (${missingList.length})`),
+              (wrongTabBtn.style.cssText = tabBtnCss),
+              (missingTabBtn.style.cssText = tabBtnCss),
+              tabBar.appendChild(wrongTabBtn),
+              tabBar.appendChild(missingTabBtn));
             const s = document.createElement("div");
             s.style.cssText =
               "\n    padding: 14px 16px;\n    overflow-y: auto;\n    flex: 1;\n  ";
@@ -5845,82 +6200,133 @@
             const c = document.createElement("div");
             ((c.style.cssText =
               "\n    text-align: center;\n    padding: 40px;\n    color: #94a3b8;\n    font-size: 14px;\n  "),
-              (c.textContent = "Loading wrong pixels..."),
+              (c.textContent = "Loading..."),
               l.appendChild(c),
               s.appendChild(l),
               o.appendChild(a),
+              o.appendChild(tabBar),
               o.appendChild(s),
               t.appendChild(o),
               t.addEventListener("click", (e) => {
                 e.target === t && document.body.removeChild(t);
               }),
-              document.body.appendChild(t),
-              requestAnimationFrame(() => {
-                ((l.innerHTML = ""),
-                  n.forEach((n, o) => {
-                    const a = document.createElement("div");
-                    a.style.cssText =
-                      "\n        display: flex;\n        justify-content: space-between;\n        align-items: center;\n        padding: 8px 10px;\n        background: #334155;\n        border-radius: 6px;\n        border: 1px solid #475569;\n        gap: 8px;\n      ";
-                    const [r, i, s] = n.no.split(",").map(Number),
-                      c = document.createElement("div");
-                    c.style.cssText = `\n        width: 16px;\n        height: 16px;\n        border-radius: 3px;\n        background: rgb(${r}, ${i}, ${s});\n        border: 1px solid rgba(255, 255, 255, 0.3);\n        flex-shrink: 0;\n      `;
-                    const d = document.createElement("div");
-                    ((d.style.cssText = "flex: 1; min-width: 0;"),
-                      (d.innerHTML = `\n        <div style="font-weight: 600; color: #f1f5f9; margin-bottom: -5px; font-size: 0.9em;">\n          Tile ${n.Qt}, ${n.eo}\n        </div>\n        <div style="font-size: 0.8em; color: #94a3b8;">\n          ${n.oo} wrong pixel${n.oo > 1 ? "s" : ""} • RGB(${r}, ${i}, ${s})\n        </div>\n      `));
-                    const p = document.createElement("button");
-                    ((p.innerHTML = ae),
-                      (p.title = "Fly to this tile"),
-                      (p.style.cssText =
-                        "\n        padding: 6px;\n        border: none;\n        border-radius: 6px;\n        cursor: pointer;\n        min-width: 32px;\n        height: 32px;\n        display: flex;\n        align-items: center;\n        justify-content: center;\n        background: linear-gradient(135deg, #3b82f6, #2563eb);\n        color: white;\n        flex-shrink: 0;\n      "),
-                      (p.onclick = () => {
-                        const o = n.ao,
-                          a = n.ro,
-                          r = [n.Qt, n.eo, o, a],
-                          i = document.querySelector("#bm-W"),
-                          s = document.querySelector("#bm-X"),
-                          l = document.querySelector("#bm-Y"),
-                          c = document.querySelector("#bm-Z");
-                        (i && (i.value = n.Qt),
-                          s && (s.value = n.eo),
-                          l && (l.value = o),
-                          c && (c.value = a));
-                        const d = f(r);
-                        if (d) {
-                          const r = v(),
-                            i = 19.5;
-                          if ("openurl" === r) {
-                            const e = `https://wplace.live/?lat=${d.lat}&lng=${d.t}&zoom=${i}`;
-                            window.location.href = e;
-                          } else fe(d.lat, d.t, i);
-                          (document.body.removeChild(t),
-                            e.ze(
-                              `🧭 ${"openurl" === r ? "Navigating" : "Flying"} to wrong pixel at Tile ${n.Qt},${n.eo} (${o}, ${a})!`,
-                            ));
-                        } else e.Te("❌ Unable to convert coordinates!");
-                      }),
-                      a.appendChild(c),
-                      a.appendChild(d),
-                      a.appendChild(p),
-                      l.appendChild(a));
-                  }));
-              }));
+              document.body.appendChild(t));
+            const setTabStyles = () => {
+              [
+                [wrongTabBtn, "wrong"],
+                [missingTabBtn, "missing"],
+              ].forEach(([btn, key]) => {
+                key === activeTab
+                  ? ((btn.style.background =
+                      "linear-gradient(135deg, #f87171, #ef4444)"),
+                    (btn.style.color = "#1e293b"),
+                    (btn.style.borderColor = "#ef4444"))
+                  : ((btn.style.background = "#334155"),
+                    (btn.style.color = "#94a3b8"),
+                    (btn.style.borderColor = "#475569"));
+              });
+            };
+            const renderActiveTab = () => {
+              const cfg = tabs[activeTab];
+              ((r.textContent = `${cfg.label} (${cfg.list.length} location${1 === cfg.list.length ? "" : "s"})`),
+                (l.innerHTML = ""));
+              if (0 === cfg.list.length) {
+                const d = document.createElement("div");
+                ((d.style.cssText =
+                  "\n    text-align: center;\n    padding: 40px;\n    color: #94a3b8;\n    font-size: 14px;\n  "),
+                  (d.textContent = cfg.emptyText),
+                  l.appendChild(d));
+                return;
+              }
+              cfg.list.forEach((n) => {
+                const a = document.createElement("div");
+                a.style.cssText =
+                  "\n        display: flex;\n        justify-content: space-between;\n        align-items: center;\n        padding: 8px 10px;\n        background: #334155;\n        border-radius: 6px;\n        border: 1px solid #475569;\n        gap: 8px;\n      ";
+                const [r, i, s] = n.no.split(",").map(Number),
+                  c = document.createElement("div");
+                c.style.cssText = `\n        width: 16px;\n        height: 16px;\n        border-radius: 3px;\n        background: rgb(${r}, ${i}, ${s});\n        border: 1px solid rgba(255, 255, 255, 0.3);\n        flex-shrink: 0;\n      `;
+                const d = document.createElement("div");
+                ((d.style.cssText = "flex: 1; min-width: 0;"),
+                  (d.innerHTML = `\n        <div style="font-weight: 600; color: #f1f5f9; margin-bottom: -5px; font-size: 0.9em;">\n          Tile ${n.Qt}, ${n.eo}\n        </div>\n        <div style="font-size: 0.8em; color: #94a3b8;">\n          ${n.oo} ${cfg.itemLabel}${n.oo > 1 ? "s" : ""} • RGB(${r}, ${i}, ${s})\n        </div>\n      `));
+                const p = document.createElement("button");
+                ((p.innerHTML = ae),
+                  (p.title = "Fly to this tile"),
+                  (p.style.cssText =
+                    "\n        padding: 6px;\n        border: none;\n        border-radius: 6px;\n        cursor: pointer;\n        min-width: 32px;\n        height: 32px;\n        display: flex;\n        align-items: center;\n        justify-content: center;\n        background: linear-gradient(135deg, #3b82f6, #2563eb);\n        color: white;\n        flex-shrink: 0;\n      "),
+                  (p.onclick = () => {
+                    const o = n.ao,
+                      a = n.ro,
+                      r = [n.Qt, n.eo, o, a],
+                      i = document.querySelector("#bm-W"),
+                      s = document.querySelector("#bm-X"),
+                      l = document.querySelector("#bm-Y"),
+                      c = document.querySelector("#bm-Z");
+                    (i && (i.value = n.Qt),
+                      s && (s.value = n.eo),
+                      l && (l.value = o),
+                      c && (c.value = a));
+                    const d = f(r);
+                    if (d) {
+                      const r = v(),
+                        i = 19.5;
+                      if ("openurl" === r) {
+                        const e = `https://wplace.live/?lat=${d.lat}&lng=${d.t}&zoom=${i}`;
+                        window.location.href = e;
+                      } else fe(d.lat, d.t, i);
+                      (document.body.removeChild(t),
+                        e.ze(
+                          `🧭 ${"openurl" === r ? "Navigating" : "Flying"} to ${cfg.itemLabel} at Tile ${n.Qt},${n.eo} (${o}, ${a})!`,
+                        ));
+                    } else e.Te("❌ Unable to convert coordinates!");
+                  }),
+                  a.appendChild(c),
+                  a.appendChild(d),
+                  a.appendChild(p),
+                  l.appendChild(a));
+              });
+            };
+            ((wrongTabBtn.onclick = () => {
+              "wrong" !== activeTab &&
+                ((activeTab = "wrong"),
+                localStorage.setItem("bmWrongPixelsTab", "wrong"),
+                setTabStyles(),
+                renderActiveTab());
+            }),
+              (missingTabBtn.onclick = () => {
+                "missing" !== activeTab &&
+                  ((activeTab = "missing"),
+                  localStorage.setItem("bmWrongPixelsTab", "missing"),
+                  setTabStyles(),
+                  renderActiveTab());
+              }),
+              setTabStyles(),
+              requestAnimationFrame(() => renderActiveTab()));
           })(ye);
         }));
       const o = document.createElement("button");
+      const applyErrorMapStyle = (btn, mode) => {
+        2 === mode
+          ? ((btn.style.background =
+              "linear-gradient(135deg, #3b82f6, #8b5cf6)"),
+            (btn.style.color = "white"))
+          : 1 === mode
+            ? ((btn.style.background =
+                "linear-gradient(135deg, #10b981, #059669)"),
+              (btn.style.color = "white"))
+            : ((btn.style.background = ""), (btn.style.color = ""));
+      };
       ((o.id = "bm-a"),
         (o.innerHTML = "🗺️"),
         (o.className =
           "btn btn-lg btn-square sm:btn-xl z-30 shadow-md text-base-content/80"),
         (o.title = "Error Map View"),
-        Ie() &&
-          ((o.style.background = "linear-gradient(135deg, #10b981, #059669)"),
-          (o.style.color = "white")),
+        applyErrorMapStyle(o, Ie()),
         (o.onclick = function () {
+          const e = (Ie() + 1) % 3;
           !(function () {
-            const e = !Ie();
             ((function (e) {
               try {
-                const n = JSON.stringify(!!e);
+                const n = JSON.stringify(e);
                 ("undefined" != typeof GM_setValue &&
                   GM_setValue("bmErrorMap", n),
                   localStorage.setItem("bmErrorMap", n),
@@ -5942,15 +6348,14 @@
                   we.Un(!0);
                 }, 50)));
           })();
-          const e = Ie();
-          (e
-            ? ((this.style.background =
-                "linear-gradient(135deg, #10b981, #059669)"),
-              (this.style.color = "white"))
-            : ((this.style.background = ""), (this.style.color = "")),
-            ye.ze(
-              `Error Map ${e ? "enabled" : "disabled"}! ${e ? "Green=correct, Red=wrong pixels" : "Back to normal view"}`,
-            ));
+          applyErrorMapStyle(this, e);
+          const msg =
+            2 === e
+              ? "Error Map + Color Hint enabled! Correct colors shown on wrong pixels — eyedrop & paint"
+              : 1 === e
+                ? "Error Map enabled! Green=correct, Red=wrong pixels"
+                : "Error Map disabled! Back to normal view";
+          ye.ze(msg);
         }),
         n.appendChild(t),
         n.appendChild(o),
@@ -6035,7 +6440,7 @@
     const e = document.createElement("style");
     ((e.id = "bm-r"),
       (e.textContent =
-        "\n    #bm-w {\n      display: flex;\n      align-items: center;\n    }\n    #bm-d {\n      margin-right: 0px;\n    }\n    #bm-2 {\n      margin: 0;\n      flex: 1;\n    }\n  "),
+        "\n    #bm-w {\n      display: flex;\n      align-items: flex-start;\n    }\n    #bm-d {\n      margin-right: 0px;\n      display: flex;\n      align-items: center;\n      align-self: flex-start;\n      height: 1.5em;\n      flex: none;\n    }\n    #bm-2 {\n      margin: 0;\n      flex: 1;\n    }\n  "),
       document.head.appendChild(e));
   }
   function Ce(e, n, t, o = null) {
@@ -6524,7 +6929,7 @@
               "\n      background: #333;\n      color: white;\n      padding: 6px 14px;\n      border-radius: 6px;\n      font-size: 0.9em;\n      font-weight: bold;\n      text-align: center;\n      margin-bottom: 10px;\n    "));
           const R = document.createElement("div");
           R.style.cssText =
-            "\n      display: flex;\n      gap: 10px;\n      margin-bottom: 6px;\n    ";
+            "\n      display: flex;\n      gap: 10px;\n      margin-bottom: 10px;\n    ";
           const V = document.createElement("button");
           ((V.textContent = "Enable All"),
             (V.style.cssText =
@@ -6543,7 +6948,7 @@
             (bmEUB.id = "bm-enable-unlocked-btn"),
             (bmEUB.textContent = "Enable Unlocked Only"),
             (bmEUB.style.cssText =
-              "\n      background: #9c27b0;\n      color: white;\n      border: none;\n      padding: 6px 14px;\n      border-radius: 6px;\n      cursor: pointer;\n      width: 100%;\n      font-size: 0.9em;\n      margin-bottom: 6px;\n    "),
+              "\n      background: #9c27b0;\n      color: white;\n      border: none;\n      padding: 6px 14px;\n      border-radius: 6px;\n      cursor: pointer;\n      width: 100%;\n      font-size: 0.9em;\n      margin-bottom: 10px;\n    "),
             bmEUBVis || (bmEUB.style.display = "none"),
             R.appendChild(V),
             R.appendChild(H),
@@ -7069,6 +7474,9 @@
             (P = Array.from(X.querySelectorAll("[data-color-item]"))),
             (j = Array.from(K.querySelectorAll("[data-color-item]"))));
           const ee = (e) => {
+            const bottomUnused = readUnusedBottom(),
+              isUnused = (e) =>
+                parseInt(e.getAttribute("data-total-count") || "0") === 0;
             const n = Array.from(X.querySelectorAll("[data-color-item]")),
               o = Array.from(K.querySelectorAll("[data-color-item]")),
               a = M ? o : n;
@@ -7076,9 +7484,13 @@
               a.forEach((e) => {
                 e.style.display = "flex";
               });
-              const e = M ? K : X;
-              return void (M ? j : P).forEach((n) => {
-                e.appendChild(n);
+              const t = M ? K : X;
+              let r = M ? j : P;
+              return void (bottomUnused
+                ? [...r.filter((e) => !isUnused(e)), ...r.filter(isUnused)]
+                : r
+              ).forEach((e) => {
+                t.appendChild(e);
               });
             }
             if ("enhanced" === e)
@@ -7102,6 +7514,11 @@
                   p = o.getAttribute("data-color-name") || "",
                   u = l > 0 ? ((l - i) / l) * 100 : 0,
                   m = c > 0 ? ((c - s) / c) * 100 : 0;
+                if (bottomUnused) {
+                  const e = 0 === l,
+                    n = 0 === c;
+                  if (e !== n) return e ? 1 : -1;
+                }
                 switch (e) {
                   case "premium":
                     const e = n.getAttribute("data-color-rgb"),
@@ -7261,9 +7678,9 @@
                   document.querySelector(".btn.btn-primary.btn-lg.relative.z-30")?.click();
                   await new Promise(r => setTimeout(r, 300));
                 }
-                // Unfold colors panel if collapsed
+                // Unfold colors panel if collapsed (detect by button count instead of SVG path)
                 const unfoldBtn = document.querySelector("button.bottom-0");
-                const panelWasFolded = !!(unfoldBtn && unfoldBtn.querySelector("path")?.getAttribute("d")?.includes("480-120"));
+                const panelWasFolded = !!(unfoldBtn && document.querySelectorAll("button.btn.relative.w-full").length < 30);
                 if (panelWasFolded) {
                   unfoldBtn.click();
                   await new Promise(r => setTimeout(r, 300));
@@ -7292,6 +7709,15 @@
                   const rgb = `${e.rgb[0]},${e.rgb[1]},${e.rgb[2]}`;
                   unlockedRgb.has(rgb) ? Q.Je(e.rgb) : Q.je(e.rgb);
                 });
+                // COLOR_TOLERANCE expansion from nearby locked colors can bleed into unlocked colors.
+                // Explicitly remove each unlocked color from the expanded disabled set.
+                if (Q._disabledExpanded) {
+                  t.forEach((e) => {
+                    const rgb = `${e.rgb[0]},${e.rgb[1]},${e.rgb[2]}`;
+                    if (unlockedRgb.has(rgb))
+                      Q._disabledExpanded.delete((e.rgb[0] << 16) | (e.rgb[1] << 8) | e.rgb[2]);
+                  });
+                }
                 Oe();
                 m.remove();
                 ye.ze("Enabled unlocked colors only...");
@@ -8346,11 +8772,12 @@
         const n = localStorage.getItem("bmErrorMap");
         null !== n && (e = JSON.parse(n));
       }
-      return null !== e && e;
+      if (null === e) return 0;
+      return "number" == typeof e ? e : e ? 1 : 0;
     } catch (e) {
       console.warn("Failed to load error map setting:", e);
     }
-    return !1;
+    return 0;
   }
   function Ee(e) {
     if (!Re()) return;
@@ -8576,6 +9003,23 @@
       console.warn("Failed to load Show Left-on-Color setting:", e);
     }
     return !1;
+  }
+  function readUnusedBottom() {
+    try {
+      let e = null;
+      if ("undefined" != typeof GM_getValue) {
+        const n = GM_getValue("bmUnusedColorsBottom", null);
+        null !== n && (e = JSON.parse(n));
+      }
+      if (null === e) {
+        const n = localStorage.getItem("bmUnusedColorsBottom");
+        null !== n && (e = JSON.parse(n));
+      }
+      if (null !== e) return (u("Unused-colors-at-bottom setting loaded:", e), e);
+    } catch (e) {
+      console.warn("Failed to load Unused-colors-at-bottom setting:", e);
+    }
+    return !0;
   }
   function Ve(e) {
     if (!document.getElementById("bm-h"))
@@ -8832,6 +9276,14 @@
             ((function () {
               const e = document.getElementById("bm-25");
               if (!e) return;
+              if (0 === e.querySelectorAll(".bm-27").length)
+                return (
+                  u(
+                    "[Color Menu] List is empty during auto-update - forcing full rebuild",
+                  ),
+                  sn(),
+                  void ln(!0, !0)
+                );
               const n = we?.tt?.(0, !0);
               n &&
                 e.querySelectorAll(".bm-27").forEach((e) => {
@@ -8899,7 +9351,8 @@
       disabledColors: null,
       lo: null,
     },
-    an = !1;
+    an = !1,
+    _colorRenderRetries = 0;
   function rn() {
     const e = we?._?.[0];
     if (!e) return void sn();
@@ -9078,10 +9531,20 @@
                 u(
                   '[Color Menu] No colors in DOM - showing "no colors available" message',
                 ),
+                we?._?.[0] &&
+                  _colorRenderRetries < 5 &&
+                  (_colorRenderRetries++,
+                  u(
+                    `[Color Menu] Template present but stats empty - retrying render (attempt ${_colorRenderRetries}/5)`,
+                  ),
+                  setTimeout(() => {
+                    (sn(), ln(!0, !0));
+                  }, 3e3)),
                 void (t.innerHTML =
                   '<p style="margin: 0; color: #888; text-align: center;">No template colors available</p>')
               );
-            (u("[Color Menu] Setting up filters and updating cache"),
+            ((_colorRenderRetries = 0),
+              u("[Color Menu] Setting up filters and updating cache"),
               (function (e) {
                 const n = document.getElementById("bm-O"),
                   t = document.getElementById("bm-24"),
@@ -9326,7 +9789,8 @@
         l = je(),
         c = Je(),
         d = Be(),
-        p = Re();
+        p = Re(),
+        cf = readUnusedBottom();
       const m = document.createElement("div");
       m.id = "bm-0";
       const g = Be(),
@@ -9822,11 +10286,51 @@
         on.appendChild(rn),
         Ze.appendChild(en),
         Ze.appendChild(nn),
-        Ze.appendChild(on),
-        fe.appendChild(he),
+        Ze.appendChild(on));
+      const cfSec = document.createElement("div");
+      cfSec.style.cssText =
+        "\n    margin-top: 20px;\n    padding-top: 20px;\n    border-top: 1px solid var(--slate-700);\n  ";
+      const cfTitle = document.createElement("div");
+      ((cfTitle.textContent = "Unused Colors at Bottom:"),
+        (cfTitle.style.cssText =
+          "\n    font-size: 1em; \n    margin-bottom: 8px; \n    color: var(--slate-200);\n    font-weight: 600;\n    letter-spacing: -0.01em;\n  "));
+      const cfDesc = document.createElement("div");
+      ((cfDesc.textContent =
+        "Always move template colors that aren't used to the bottom of the Color Filter list."),
+        (cfDesc.style.cssText =
+          "\n    font-size: 0.9em; \n    color: var(--slate-300); \n    margin-bottom: 12px; \n    line-height: 1.4;\n    letter-spacing: -0.005em;\n  "));
+      const cfRow = document.createElement("div");
+      cfRow.style.cssText =
+        "\n    display: flex;\n    align-items: center;\n    gap: 8px;\n  ";
+      const cfChk = document.createElement("input");
+      ((cfChk.type = "checkbox"),
+        (cfChk.checked = cf),
+        (cfChk.style.cssText =
+          "\n    width: 16px;\n    height: 16px;\n    cursor: pointer;\n  "));
+      const cfSpan = document.createElement("span");
+      ((cfSpan.textContent = cf ? "Enabled" : "Disabled"),
+        (cfSpan.style.cssText = `\n    color: ${cf ? "#4caf50" : "#f44336"};\n    font-weight: bold;\n    cursor: pointer;\n  `));
+      const cfUpd = () => {
+        ((cf = cfChk.checked),
+          (cfSpan.textContent = cf ? "Enabled" : "Disabled"),
+          (cfSpan.style.color = cf ? "#4caf50" : "#f44336"),
+          u(`Unused colors at bottom ${cf ? "enabled" : "disabled"} (preview only)`));
+      };
+      (cfChk.addEventListener("change", cfUpd),
+        (cfSpan.onclick = (e) => {
+          (e.stopPropagation(), (cfChk.checked = !cfChk.checked), cfUpd());
+        }),
+        (cfRow.style.cursor = "default"),
+        cfRow.appendChild(cfChk),
+        cfRow.appendChild(cfSpan),
+        cfSec.appendChild(cfTitle),
+        cfSec.appendChild(cfDesc),
+        cfSec.appendChild(cfRow));
+      (fe.appendChild(he),
         fe.appendChild(xe),
         fe.appendChild(ze),
-        fe.appendChild(Ze));
+        fe.appendChild(Ze),
+        fe.appendChild(cfSec));
       const ln = document.createElement("div");
       ln.style.cssText = `\n    background: linear-gradient(135deg, var(--slate-800), var(--slate-750));\n    border: 1px solid var(--slate-700);\n    border-radius: ${J};\n    padding: ${P};\n    margin-bottom: ${j};\n    position: relative;\n    z-index: 1;\n  `;
       const cn = document.createElement("div");
@@ -10120,6 +10624,23 @@
                   );
                 }
               })(p),
+              (function (e) {
+                try {
+                  const n = JSON.stringify(!!e);
+                  ("undefined" != typeof GM_setValue &&
+                    GM_setValue("bmUnusedColorsBottom", n),
+                    localStorage.setItem("bmUnusedColorsBottom", n),
+                    u("Unused-colors-at-bottom setting saved:", e),
+                    document.getElementById("bm-h") &&
+                      "function" == typeof window.refreshColorFilterOverlay &&
+                      window.refreshColorFilterOverlay());
+                } catch (e) {
+                  console.error(
+                    "❌ Failed to save Unused-colors-at-bottom setting:",
+                    e,
+                  );
+                }
+              })(cf),
               (function (e) {
                 try {
                   const n = JSON.stringify(e);
@@ -10498,6 +11019,7 @@
       (e.innerHTML =
         '\n<div class="drag-handle"></div>\n<div class="hdr">\n  <h3>\n    <img class="yixuan-icon" src="' + YIXUAN_ICON_URL + '" alt="Blue Marble" style="width:42px;height:42px;">\n    Location Search\n  </h3>\n  <div class="actions">\n    <button id="yixuan-location-btn">Location</button>\n    <button id="yixuan-search-close">Close</button>\n  </div>\n</div>\n<div class="body">\n  <input type="text" id="yixuan-search-input" placeholder="Search for a place...">\n  <div id="yixuan-search-results"></div>\n  <div id="yixuan-favorites-menu" style="display: none;">\n    <div id="yixuan-favorites-header">\n      <div id="yixuan-favorites-title" style="cursor: pointer;">\n        <span id="yixuan-favorites-toggle">▼</span> ⭐ Favorites\n        <span id="yixuan-favorites-count">0</span>\n      </div>\n\n      <button id="yixuan-clear-favorites">Clear All</button>\n    </div>\n    <input type="text" id="yixuan-favorites-filter" class="yixuan-favorites-filter" placeholder="Filter favorites...">\n    <div id="yixuan-favorites-list"></div>\n  </div>\n</div>'),
       document.body.appendChild(e),
+      applyIconFallback(e.querySelector("img.yixuan-icon")),
       e
         .querySelector("#yixuan-search-close")
         .addEventListener("click", () => (e.style.display = "none")));
@@ -10873,4 +11395,6 @@
     "loading" === document.readyState
       ? document.addEventListener("DOMContentLoaded", pn)
       : pn());
+  _ptimeEnd("[PERF] YixuanMarble total script init");
+  _plog(`[PERF] YixuanMarble synchronous init done in ${(performance.now() - _scriptStart).toFixed(1)}ms`);
 })();
