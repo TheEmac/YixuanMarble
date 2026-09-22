@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yixuan Marble
 // @namespace    yixuan-marble
-// @version      1.3.6
+// @version      1.3.7
 // @description  A userscript to automate and/or enhance the user experience on Wplace.live. Make sure to comply with the site's Terms of Service, and rules! This script is not affiliated with Wplace.live in any way, use at your own risk. This script is not affiliated with TamperMonkey. The author of this userscript is not responsible for any damages, issues, loss of data, or punishment that may occur as a result of using this script. This script is provided "as is" under the MPL-2.0 license. The "Blue Marble" icon is licensed under CC0 1.0 Universal (CC0 1.0) Public Domain Dedication. The image is owned by NASA. Originally created by Seris0 as "Skirk Marble".
 // @author       Yixuan (original script by Seris0, SwingTheVine)
 // @license      MPL-2.0
@@ -155,6 +155,19 @@
   // The "skip" sentinel (wplace's unset marker) must also survive farbled readback.
   const isSkipColor = (r, g, b) =>
     Math.abs(r - 222) <= 2 && Math.abs(g - 250) <= 2 && Math.abs(b - 206) <= 2;
+  // Pin the button row (#bm-g) just right of wplace's bottom-left button group (settings etc.).
+  // Only re-anchors while the paint panel is closed, so opening it never moves the row.
+  function bmPositionG(n) {
+    const panel = document.querySelector("div.absolute.bottom-0.left-0.z-50.w-full");
+    if (panel && panel.offsetHeight > 0) return;
+    const anchor = document.querySelector(".absolute.bottom-3.left-3.z-30");
+    if (!anchor || !anchor.offsetParent) return;
+    const r = anchor.getBoundingClientRect();
+    const left = Math.round(r.right + 8) + "px",
+      bottom = Math.round(window.innerHeight - r.bottom) + "px";
+    n.style.left !== left && (n.style.left = left);
+    n.style.bottom !== bottom && (n.style.bottom = bottom);
+  }
   var e,
     n = Object.defineProperty,
     t = Object.getOwnPropertyNames,
@@ -1629,6 +1642,17 @@
       });
     (a.observe(document.body, { childList: !0, subtree: !0 }),
       window.addEventListener("message", (e) => {
+        if (e.data?.source === "bm-refresh-tiles") {
+          // See bmRefreshTiles(): wplace refreshes its pixel layer on any SW message with a type.
+          try {
+            navigator.serviceWorker
+              ? navigator.serviceWorker.dispatchEvent(
+                  new MessageEvent("message", { data: { type: "bm-refresh" } }),
+                )
+              : window.bmmap?.refreshTiles?.("pixel-art-layer");
+          } catch (e) {}
+          return;
+        }
         const {
           source: a,
           endpoint: r,
@@ -3288,7 +3312,7 @@
               (u("Forcing template redraw to apply enhanced mode changes"),
               this.Un(!1),
               setTimeout(() => {
-                this.Un(!0);
+                (this.Un(!0), bmRefreshTiles());
               }, 50)));
         }
         Ct() {
@@ -6145,18 +6169,13 @@
       }
     }).observe(document.body, { childList: !0, subtree: !0 }),
     new MutationObserver(() => {
-      const e = document.querySelector(
-        'button[title="Toggle art opacity"], button[title="Alterar opacidade"]',
-      );
-      if (!e) return;
       let n = document.querySelector("#bm-g");
-      if (n) return;
-      if (!e.closest(".absolute.bottom-3.left-3.z-30")) return;
+      if (n) return void bmPositionG(n);
       ((n = document.createElement("div")),
         (n.id = "bm-g"),
-        (n.className = "fixed z-30"),
+        (n.className = "fixed"),
         (n.style.cssText =
-          "\n      display: flex;\n      flex-direction: column;\n      gap: 8px;\n      bottom: 230px;\n      left: 12px;\n    "));
+          "\n      display: flex;\n      flex-direction: row;\n      gap: 8px;\n      bottom: 12px;\n      left: 76px;\n      z-index: 60;\n    "));
       const t = document.createElement("button");
       ((t.id = "bm-1L"),
         (t.innerHTML = "❌"),
@@ -6413,7 +6432,7 @@
                 we._.length > 0 &&
                 (we.Un(!1),
                 setTimeout(() => {
-                  we.Un(!0);
+                  (we.Un(!0), bmRefreshTiles());
                 }, 50)));
           })();
           applyErrorMapStyle(this, e);
@@ -6425,10 +6444,15 @@
                 : "Error Map disabled! Back to normal view";
           ye.ze(msg);
         }),
-        n.appendChild(t),
         n.appendChild(o),
-        document.body.appendChild(n));
+        n.appendChild(t),
+        document.body.appendChild(n),
+        bmPositionG(n));
     }).observe(document.body, { childList: !0, subtree: !0 }),
+    window.addEventListener("resize", () => {
+      const n = document.querySelector("#bm-g");
+      n && bmPositionG(n);
+    }),
     u(
       "🎹 [Keyboard Shortcuts] Initializing X+Click shortcut for enhanced colors...",
     ),
@@ -6456,52 +6480,30 @@
         if (!Ne) return;
         const n = e.target.closest('button[id^="color-"]');
         if (!n) return;
-        (e.preventDefault(), e.stopPropagation());
-        const t = n.id,
-          o = ze[t];
-        if (!o) return void console.warn(`🎹 [X-Mode] Unknown color ID: ${t}`);
-        if ("color-0" === t)
-          return void (
-            void 0 !== ye &&
-            ye.ze &&
-            ye.ze("🎹 X-Mode: Cannot enhance transparent color")
-          );
-        u(`🎹 [X-Mode] Processing color: ${t} -> RGB(${o.join(", ")})`);
-        const a = we._?.[0];
-        if (a)
-          try {
-            (a.enhancedColors.clear(),
-              u("🎹 [X-Mode] Cleared all enhanced colors"),
-              a.He(o),
-              u(`🎹 [X-Mode] Enhanced mode enabled for RGB(${o.join(", ")})`),
-              Oe());
-            const e = n.getAttribute("aria-label") || t;
-            (void 0 !== ye &&
-              ye.ze &&
-              ye.ze(`✅ Enhanced mode enabled for: ${e}`),
-              De()
-                .then(() => {
-                  u("🎹 [X-Mode] Template refreshed with new enhanced color");
-                })
-                .catch((e) => {
-                  console.error("🎹 [X-Mode] Error refreshing template:", e);
-                }));
-            const r = document.getElementById("bm-h");
-            r &&
-              (r.remove(),
-              setTimeout(() => {
-                Te();
-              }, 100));
-          } catch (e) {
-            (console.error("🎹 [X-Mode] Error processing enhanced color:", e),
-              void 0 !== ye &&
-                ye.Te &&
-                ye.Te("🎹 X-Mode: Failed to set enhanced color"));
-          }
-        else void 0 !== ye && ye.Te && ye.Te("🎹 X-Mode: No template loaded");
+        (e.preventDefault(), e.stopPropagation(), bmEnhanceOnlyColor(n));
       },
       !0,
     ),
+    // Enhance Selected Color: the game marks the selected palette button with
+    // aria-pressed="true". Watching that attribute catches every way of selecting
+    // (palette click, middle-click eyedropper, shortcuts), not just clicks.
+    new MutationObserver((muts) => {
+      for (const m of muts) {
+        const n = m.target;
+        if (
+          !n.id?.startsWith("color-") ||
+          "true" !== n.getAttribute("aria-pressed") ||
+          n.id === bmLastSelColorId
+        )
+          continue;
+        bmLastSelColorId = n.id;
+        bmFollowSel && !Ne && bmEnhanceOnlyColor(n, !0);
+      }
+    }).observe(document.body, {
+      subtree: !0,
+      attributes: !0,
+      attributeFilter: ["aria-pressed"],
+    }),
     u("[Keyboard Shortcuts] X+Click shortcut initialized successfully"),
     !document.getElementById("bm-r"))
   ) {
@@ -7024,6 +7026,28 @@
             J.appendChild(R),
             J.appendChild(bmEUB),
             J.appendChild(U));
+          const bmFSB = document.createElement("button");
+          const bmFSBRender = () => {
+            bmFSB.textContent = `Enhance Selected Color: ${bmFollowSel ? "ON" : "OFF"}`;
+            bmFSB.style.background = bmFollowSel ? "#2196f3" : "#6c757d";
+          };
+          ((bmFSB.id = "bm-follow-selected-btn"),
+            (bmFSB.title = "When ON, picking a color in the palette enhances only that color"),
+            (bmFSB.style.cssText =
+              "\n      color: white;\n      border: none;\n      padding: 6px 14px;\n      border-radius: 6px;\n      cursor: pointer;\n      width: 100%;\n      font-size: 0.9em;\n      margin-top: 10px;\n    "),
+            bmFSBRender(),
+            (bmFSB.onclick = () => {
+              bmFollowSel = !bmFollowSel;
+              try { localStorage.setItem("bmFollowSelectedColor", JSON.stringify(bmFollowSel)); } catch {}
+              bmFSBRender();
+              ye.ze(`Enhance Selected Color ${bmFollowSel ? "enabled" : "disabled"}`);
+              const sel =
+                bmFollowSel &&
+                (document.querySelector('button[id^="color-"][aria-pressed="true"]') ||
+                  (bmLastSelColorId && document.getElementById(bmLastSelColorId)));
+              sel && bmEnhanceOnlyColor(sel, !0);
+            }),
+            J.appendChild(bmFSB));
           const W = document.createElement("div");
           W.style.cssText =
             "\n      display: flex;\n      align-items: center;\n      gap: 8px;\n      padding: 6px 14px;\n      background: rgba(255, 255, 255, 0.1);\n      border-radius: 6px;\n      border: 1px solid rgba(255, 255, 255, 0.2);\n      margin-top: 10px;\n    ";
@@ -8815,7 +8839,68 @@
       "color-62": [148, 140, 107],
       "color-63": [205, 197, 158],
     },
-    Ne = !1;
+    Ne = !1,
+    bmFollowSel = (() => {
+      try { return JSON.parse(localStorage.getItem("bmFollowSelectedColor") ?? "false"); } catch { return !1; }
+    })(),
+    bmLastSelColorId = null;
+  // Clears all enhanced colors and enhances only the palette button's color.
+  // Used by X+Click and the Enhance Selected Color toggle (quiet skips the toast).
+  function bmEnhanceOnlyColor(n, quiet = !1) {
+    const t = n.id,
+      o = ze[t];
+    if (!o) return void console.warn(`🎹 [X-Mode] Unknown color ID: ${t}`);
+    if ("color-0" === t)
+      return void (
+        quiet ||
+        (void 0 !== ye &&
+          ye.ze &&
+          ye.ze("🎹 X-Mode: Cannot enhance transparent color"))
+      );
+    u(`🎹 [X-Mode] Processing color: ${t} -> RGB(${o.join(", ")})`);
+    const a = we._?.[0];
+    if (a)
+      try {
+        (a.enhancedColors.clear(),
+          u("🎹 [X-Mode] Cleared all enhanced colors"),
+          a.He(o),
+          u(`🎹 [X-Mode] Enhanced mode enabled for RGB(${o.join(", ")})`),
+          Oe());
+        const e = n.getAttribute("aria-label") || t;
+        (quiet ||
+          (void 0 !== ye &&
+            ye.ze &&
+            ye.ze(`✅ Enhanced mode enabled for: ${e}`)),
+          De()
+            .then(() => {
+              u("🎹 [X-Mode] Template refreshed with new enhanced color");
+            })
+            .catch((e) => {
+              console.error("🎹 [X-Mode] Error refreshing template:", e);
+            }));
+        const r = document.getElementById("bm-h");
+        r &&
+          (r.remove(),
+          setTimeout(() => {
+            Te();
+          }, 100));
+      } catch (e) {
+        (console.error("🎹 [X-Mode] Error processing enhanced color:", e),
+          void 0 !== ye &&
+            ye.Te &&
+            ye.Te("🎹 X-Mode: Failed to set enhanced color"));
+      }
+    else quiet || (void 0 !== ye && ye.Te && ye.Te("🎹 X-Mode: No template loaded"));
+  }
+  // Make wplace reload the visible pixel tiles now, so overlay changes
+  // (enhanced/disabled colors, crosshairs) show immediately instead of waiting
+  // for wplace's own 6-15s refresh timer. Tiles are re-processed by our fetch hook.
+  // wplace refreshes its pixel layer (clearing its own tile cache first) on any
+  // service-worker message with a `type`. The dispatch happens in the
+  // page-injected script so the event is built in the page's own JS world.
+  function bmRefreshTiles() {
+    window.postMessage({ source: "bm-refresh-tiles" }, "*");
+  }
   function Oe() {
     Promise.resolve()
       .then(() => (oe(), G))
@@ -8879,6 +8964,7 @@
         we.Un(!1);
         await new Promise((r) => setTimeout(r, 0));
         we.Un(!0);
+        bmRefreshTiles();
         u("Template refresh completed successfully");
         // Save settings in the background with a debounce so rapid
         // color toggles don't hammer storage with large JSON serialisations.
@@ -9246,7 +9332,7 @@
         we._.length > 0 &&
         (we.Un(!1),
         setTimeout(() => {
-          (we.Un(!0), He());
+          (we.Un(!0), bmRefreshTiles(), He());
         }, 100));
     }));
   var We = null;
