@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yixuan Marble
 // @namespace    yixuan-marble
-// @version      1.3.7
+// @version      1.3.9
 // @description  A userscript to automate and/or enhance the user experience on Wplace.live. Make sure to comply with the site's Terms of Service, and rules! This script is not affiliated with Wplace.live in any way, use at your own risk. This script is not affiliated with TamperMonkey. The author of this userscript is not responsible for any damages, issues, loss of data, or punishment that may occur as a result of using this script. This script is provided "as is" under the MPL-2.0 license. The "Blue Marble" icon is licensed under CC0 1.0 Universal (CC0 1.0) Public Domain Dedication. The image is owned by NASA. Originally created by Seris0 as "Skirk Marble".
 // @author       Yixuan (original script by Seris0, SwingTheVine)
 // @license      MPL-2.0
@@ -155,6 +155,39 @@
   // The "skip" sentinel (wplace's unset marker) must also survive farbled readback.
   const isSkipColor = (r, g, b) =>
     Math.abs(r - 222) <= 2 && Math.abs(g - 250) <= 2 && Math.abs(b - 206) <= 2;
+  // [hue in degrees, saturation 0..1] of an RGB color.
+  const bmHueSat = (r, g, b) => {
+    const mx = Math.max(r, g, b),
+      mn = Math.min(r, g, b),
+      dl = mx - mn;
+    if (0 === dl) return [0, 0];
+    const h =
+      mx === r ? ((g - b) / dl) % 6 : mx === g ? (b - r) / dl + 2 : (r - g) / dl + 4;
+    return [(h * 60 + 360) % 360, dl / mx];
+  };
+  // Crosshair color for a pixel drawn over canvas color (r,g,b,a), per the
+  // crosshair's color mode (c.adapt): "invert" always uses the inverse of the
+  // pixel beneath; "auto" keeps the chosen color unless it's too close to it
+  // (near in RGB, or the same hue family, e.g. pink on red).
+  // Near-gray pixels (whose inverse is also gray) get black or white instead.
+  // Transparent (unpainted) canvas keeps the chosen color.
+  const bmCrosshairRgb = (c, r, g, b, a) => {
+    const m = c.adapt;
+    if (!m || "off" === m || !a) return c.rgb;
+    if ("auto" === m) {
+      const dr = c.rgb[0] - r,
+        dg = c.rgb[1] - g,
+        db = c.rgb[2] - b,
+        [h1, s1] = bmHueSat(c.rgb[0], c.rgb[1], c.rgb[2]),
+        [h2, s2] = bmHueSat(r, g, b),
+        dh = Math.min(Math.abs(h1 - h2), 360 - Math.abs(h1 - h2)),
+        sameHue = s1 > 0.3 && s2 > 0.3 && dh < 50;
+      if (!sameHue && dr * dr + dg * dg + db * db >= 14400) return c.rgb;
+    }
+    if (Math.abs(r - 128) + Math.abs(g - 128) + Math.abs(b - 128) < 120)
+      return 0.299 * r + 0.587 * g + 0.114 * b > 128 ? [0, 0, 0] : [255, 255, 255];
+    return [255 - r, 255 - g, 255 - b];
+  };
   // Pin the button row (#bm-g) just right of wplace's bottom-left button group (settings etc.).
   // Only re-anchors while the paint panel is closed, so opening it never moves the row.
   function bmPositionG(n) {
@@ -1124,7 +1157,7 @@
         const c = {},
           d = {},
           p = document.createElement("canvas"),
-          u = p.getContext("2d", { Ge: !0, alpha: !0, Ae: !0 });
+          u = p.getContext("2d", { willReadFrequently: !0, alpha: !0, Ae: !0 });
         u.imageSmoothingEnabled = !1;
         let m = 0;
         (Math.ceil((t + this.coords[3] - this.coords[3]) / this.Ie),
@@ -1264,9 +1297,13 @@
         const n = `${e[0]},${e[1]},${e[2]}`;
         (this.enhancedColors.delete(n), this.Ue());
       }
+      // Template pixels come from canvas readback, which Brave farbles (±1 per
+      // channel), so match on the canonical palette key as well as the raw one.
       Ye(e) {
-        const n = `${e[0]},${e[1]},${e[2]}`;
-        return this.enhancedColors.has(n);
+        return (
+          this.enhancedColors.has(`${e[0]},${e[1]},${e[2]}`) ||
+          this.enhancedColors.has(canonKey(e[0], e[1], e[2]))
+        );
       }
       qe() {
         return Array.from(this.enhancedColors);
@@ -1280,7 +1317,7 @@
         const e = {};
         for (const [n, t] of Object.entries(this.Oe)) {
           const o = document.createElement("canvas"),
-            a = o.getContext("2d", { Ge: !0 });
+            a = o.getContext("2d", { willReadFrequently: !0 });
           let r, i;
           (void 0 !== t.width
             ? ((r = t.width), (i = t.height))
@@ -2063,13 +2100,16 @@
           const i = await createImageBitmap(e),
             s = document.createElement("canvas");
           ((s.width = t), (s.height = t));
-          const l = s.getContext("2d");
+          const l = s.getContext("2d", { willReadFrequently: !0 });
           ((l.imageSmoothingEnabled = !1),
             l.beginPath(),
             l.rect(0, 0, t, t),
             l.clip(),
             l.clearRect(0, 0, t, t),
             l.drawImage(i, 0, 0, t, t));
+          // Tile-space coords of crosshair/border pixels drawn around wrong pixels,
+          // restored on top of the error map when bmHlOverErr is on.
+          const _wrongHl = [];
           for (let e = 0; e < a.length; e++) {
             const t = a[e];
             (u("Template:"), u(t));
@@ -2227,7 +2267,8 @@
                       );
                     for (const t of l) {
                       const i = t & 0xFFFF, l = t >> 16,
-                        c = h.has(t);
+                        c = h.has(t),
+                        _isWrong = c;
                       {
                         let placed = false;
                         const centerIdx = 4 * (l * d + i);
@@ -2287,11 +2328,49 @@
                         const h = 4 * (f * d + g);
                         if (0 !== m[h + 3]) continue;
                         const v = this.en();
-                        ((a[h] = v.rgb[0]),
-                          (a[h + 1] = v.rgb[1]),
-                          (a[h + 2] = v.rgb[2]),
+                        let cr = v.rgb;
+                        if (v.adapt && "off" !== v.adapt) {
+                          // [data, index] of the paint at local template coords.
+                          const paintAt = (x, y) => {
+                            if (r) return [r, 4 * (y * d + x)];
+                            const bx = x + n, by = y + o;
+                            return bx >= 0 && bx < s.width && by >= 0 && by < s.height
+                              ? [b, 4 * (by * s.width + bx)]
+                              : null;
+                          };
+                          const pa = paintAt(g, f);
+                          if (pa) {
+                            const [src, k] = pa;
+                            let pr = src[k], pg = src[k + 1], pb = src[k + 2];
+                            // With the error map on, compare against what will be visible:
+                            // the paint tinted by the red/green overlay drawn over this cell
+                            // (same classification and color filter as the error map pass).
+                            if (this.hn && src[k + 3] > 0) {
+                              const cx = g - (g % this.un) + 1,
+                                cy = f - (f % this.un) + 1,
+                                ct = 4 * (cy * d + cx),
+                                pc = cx < d && cy < p && m[ct + 3] >= 64 ? paintAt(cx, cy) : null;
+                              if (pc && pc[0][pc[1] + 3] >= 64) {
+                                const key = canonKey(m[ct], m[ct + 1], m[ct + 2]),
+                                  t0 = this._?.[0],
+                                  shown = (!t0?.jn || t0.jn.has(key)) && !1 !== t0?.Bn?.[key]?.enabled,
+                                  ok = colorsMatch(pc[0][pc[1]], pc[0][pc[1] + 1], pc[0][pc[1] + 2], m[ct], m[ct + 1], m[ct + 2]),
+                                  ov = !shown ? null : ok ? (this.xn ? [0, 128, 0, 0.6] : null) : this.vn ? [255, 0, 0, 0.8] : null;
+                                ov &&
+                                  ((pr = ov[0] * ov[3] + pr * (1 - ov[3])),
+                                  (pg = ov[1] * ov[3] + pg * (1 - ov[3])),
+                                  (pb = ov[2] * ov[3] + pb * (1 - ov[3])));
+                              }
+                            }
+                            cr = bmCrosshairRgb(v, pr, pg, pb, src[k + 3]);
+                          }
+                        }
+                        ((a[h] = cr[0]),
+                          (a[h + 1] = cr[1]),
+                          (a[h + 2] = cr[2]),
                           (a[h + 3] = v.alpha),
                           e++);
+                        _isWrong && _wrongHl.push(g + n, f + o);
                       }
                       if (v) {
                         const e = [
@@ -2322,7 +2401,8 @@
                             (a[g + 1] = 100),
                             (a[g + 2] = 255),
                             (a[g + 3] = 200),
-                            y++);
+                            y++,
+                            _isWrong && _wrongHl.push(e + n, u + o));
                         }
                       }
                     }
@@ -2458,6 +2538,23 @@
             }
             _plog(`[PIPELINE] ── fresh-analysis total for tile: ${(performance.now()-_freshT0).toFixed(1)}ms ──`);
           }
+          // Snapshot the wrong-pixel crosshair region before the error map paints
+          // over it, so it can be restored on top afterwards.
+          let _hlSnap = null;
+          if (this.hn && a.length > 0 && bmHlOverErr && _wrongHl.length > 0)
+            try {
+              let x0 = t, y0 = t, x1 = -1, y1 = -1;
+              for (let k = 0; k < _wrongHl.length; k += 2) {
+                const x = _wrongHl[k], y = _wrongHl[k + 1];
+                if (x < 0 || y < 0 || x >= t || y >= t) continue;
+                x < x0 && (x0 = x), x > x1 && (x1 = x), y < y0 && (y0 = y), y > y1 && (y1 = y);
+              }
+              x1 >= 0 &&
+                (_hlSnap = { x0, y0, w: x1 - x0 + 1, h: y1 - y0 + 1 },
+                (_hlSnap.data = l.getImageData(x0, y0, _hlSnap.w, _hlSnap.h).data));
+            } catch (e) {
+              _hlSnap = null;
+            }
           if (this.hn && a.length > 0)
             try {
               let n = null;
@@ -2566,6 +2663,20 @@
                     if (s(o)) continue;
                     (l.fillStyle = `rgb(${o})`), l.fillRect(n, t, 1, 1);
                   }
+                }
+                if (_hlSnap) {
+                  const { x0, y0, w, h, data: snap } = _hlSnap,
+                    cur = l.getImageData(x0, y0, w, h);
+                  for (let k = 0; k < _wrongHl.length; k += 2) {
+                    const x = _wrongHl[k] - x0, y = _wrongHl[k + 1] - y0;
+                    if (x < 0 || y < 0 || x >= w || y >= h) continue;
+                    const q = 4 * (y * w + x);
+                    ((cur.data[q] = snap[q]),
+                      (cur.data[q + 1] = snap[q + 1]),
+                      (cur.data[q + 2] = snap[q + 2]),
+                      (cur.data[q + 3] = snap[q + 3]));
+                  }
+                  l.putImageData(cur, x0, y0);
                 }
               }
             } catch (e) {
@@ -3583,7 +3694,7 @@
               y = g - p,
               w = b - m,
               k = new OffscreenCanvas(y, w),
-              $ = k.getContext("2d", { Ge: !0 });
+              $ = k.getContext("2d", { willReadFrequently: !0 });
             (($.imageSmoothingEnabled = !1), $.clearRect(0, 0, y, w));
             const M = (n, t) =>
               new Promise((o, a) => {
@@ -6164,8 +6275,8 @@
               (this.textContent = n ? "Move ↓" : "Move ↑"));
           }));
         const e =
-          t.parentNode.parentNode.parentNode.parentNode.querySelector("h2");
-        e.parentNode?.appendChild(o);
+          t.parentNode?.parentNode?.parentNode?.parentNode?.querySelector("h2");
+        e?.parentNode?.appendChild(o);
       }
     }).observe(document.body, { childList: !0, subtree: !0 }),
     new MutationObserver(() => {
@@ -7012,7 +7123,16 @@
           const bmEUB = document.createElement("button");
           let bmEUBVis = true;
           try { bmEUBVis = JSON.parse(localStorage.getItem("bmShowEnableUnlockedBtn") ?? "true"); } catch {}
-          ((U.textContent = "Disable all Enhanced"),
+          // Flips between "Disable all Enhanced" and "Enable all Enhanced" depending
+          // on whether the template has any enhanced colors.
+          const bmUSync = () => {
+            const tp = we._?.[0];
+            U.textContent =
+              tp && tp.enhancedColors && tp.enhancedColors.size > 0
+                ? "Disable all Enhanced"
+                : "Enable all Enhanced";
+          };
+          (bmUSync(),
             (U.style.cssText =
               "\n      background: #6c757d;\n      color: white;\n      border: none;\n      padding: 6px 14px;\n      border-radius: 6px;\n      cursor: pointer;\n      width: 100%;\n      font-size: 0.9em;\n    "),
             (bmEUB.id = "bm-enable-unlocked-btn"),
@@ -7048,6 +7168,24 @@
               sel && bmEnhanceOnlyColor(sel, !0);
             }),
             J.appendChild(bmFSB));
+          const bmHOB = document.createElement("button");
+          const bmHOBRender = () => {
+            bmHOB.textContent = `Highlight Above Error Map: ${bmHlOverErr ? "ON" : "OFF"}`;
+            bmHOB.style.background = bmHlOverErr ? "#2196f3" : "#6c757d";
+          };
+          ((bmHOB.id = "bm-highlight-over-error-btn"),
+            (bmHOB.title = "When ON, enhanced crosshairs on wrong pixels are drawn on top of the error map"),
+            (bmHOB.style.cssText =
+              "\n      color: white;\n      border: none;\n      padding: 6px 14px;\n      border-radius: 6px;\n      cursor: pointer;\n      width: 100%;\n      font-size: 0.9em;\n      margin-top: 10px;\n    "),
+            bmHOBRender(),
+            (bmHOB.onclick = () => {
+              bmHlOverErr = !bmHlOverErr;
+              try { localStorage.setItem("bmHighlightOverErrorMap", JSON.stringify(bmHlOverErr)); } catch {}
+              bmHOBRender();
+              ye.ze(`Highlight Above Error Map ${bmHlOverErr ? "enabled" : "disabled"}`);
+              (we.Un(!0), bmRefreshTiles());
+            }),
+            J.appendChild(bmHOB));
           const W = document.createElement("div");
           W.style.cssText =
             "\n      display: flex;\n      align-items: center;\n      gap: 8px;\n      padding: 6px 14px;\n      background: rgba(255, 255, 255, 0.1);\n      border-radius: 6px;\n      border: 1px solid rgba(255, 255, 255, 0.2);\n      margin-top: 10px;\n    ";
@@ -7320,6 +7458,7 @@
               (b.onchange = (e) => {
                 (e.stopPropagation(),
                   b.checked ? Q.He(i) : Q.We(i),
+                  bmUSync(),
                   Oe(),
                   De().catch((e) => {
                     console.error("Error refreshing enhanced mode:", e);
@@ -7424,6 +7563,7 @@
                     : (Q.We(i),
                       (j.style.color = "rgba(255,255,255,0.6)"),
                       (b.checked = !1)),
+                  bmUSync(),
                   Oe(),
                   De().catch((e) => {
                     console.error("Error refreshing enhanced mode:", e);
@@ -7715,30 +7855,34 @@
             }),
             (U.onclick = async () => {
               const e = U.style.background,
-                n = U.textContent;
+                tp = we._?.[0],
+                enabling = !(tp && tp.enhancedColors && tp.enhancedColors.size > 0);
               ((U.style.background = "#dc3545"),
-                (U.textContent = "Disabling..."),
+                (U.textContent = enabling ? "Enabling..." : "Disabling..."),
                 (U.style.transform = "scale(0.95)"),
                 (U.style.transition = "all 0.1s ease"));
               try {
-                const t = we._?.[0];
-                t && t.enhancedColors && t.enhancedColors.size > 0
-                  ? (t.enhancedColors.clear(),
+                // Enabling covers every color in the panel that isn't disabled.
+                const toEnhance = enabling && tp ? t.filter((c) => "Transparent" !== c.name && !tp.Be(c.rgb)) : [];
+                tp && (!enabling || toEnhance.length > 0)
+                  ? (enabling
+                      ? (tp.Xe(toEnhance.map((c) => `${c.rgb[0]},${c.rgb[1]},${c.rgb[2]}`)))
+                      : tp.enhancedColors.clear(),
                     Oe(),
                     (U.style.background = "#28a745"),
-                    (U.textContent = "Disabled! ✓"),
+                    (U.textContent = enabling ? "Enabled! ✓" : "Disabled! ✓"),
                     await De(),
                     Te(),
                     setTimeout(() => {
                       ((U.style.background = e),
-                        (U.textContent = n),
+                        bmUSync(),
                         (U.style.transform = "scale(1)"));
                     }, 100))
                   : ((U.style.background = "#ffc107"),
-                    (U.textContent = "No Enhanced Colors"),
+                    (U.textContent = "No Colors to Enhance"),
                     setTimeout(() => {
                       ((U.style.background = e),
-                        (U.textContent = n),
+                        bmUSync(),
                         (U.style.transform = "scale(1)"));
                     }, 100));
               } catch (t) {
@@ -7746,7 +7890,7 @@
                   (U.textContent = "Error! ✗"),
                   setTimeout(() => {
                     ((U.style.background = e),
-                      (U.textContent = n),
+                      bmUSync(),
                       (U.style.transform = "scale(1)"));
                   }, 100),
                   console.error("Error disabling all enhanced colors:", t),
@@ -8842,6 +8986,10 @@
     Ne = !1,
     bmFollowSel = (() => {
       try { return JSON.parse(localStorage.getItem("bmFollowSelectedColor") ?? "false"); } catch { return !1; }
+    })(),
+    // Draw wrong-pixel crosshairs on top of the error map instead of under it.
+    bmHlOverErr = (() => {
+      try { return JSON.parse(localStorage.getItem("bmHighlightOverErrorMap") ?? "true"); } catch { return !0; }
     })(),
     bmLastSelColorId = null;
   // Clears all enhanced colors and enhances only the palette button's color.
@@ -10091,7 +10239,7 @@
               const n = Math.max(0, Math.min(255, parseInt(p.value) || 0)),
                 o = Math.max(0, Math.min(255, parseInt(f.value) || 0)),
                 a = Math.max(0, Math.min(255, parseInt(h.value) || 0));
-              ((r = { name: "Custom", rgb: [n, o, a], alpha: r.alpha, uo: !0 }),
+              ((r = { name: "Custom", rgb: [n, o, a], alpha: r.alpha, uo: !0, adapt: r.adapt }),
                 (t.style.background = `rgba(${n}, ${o}, ${a}, 1)`),
                 e(r, i),
                 (document.getElementById("bm-o").textContent =
@@ -10125,7 +10273,7 @@
           }
           ((t.onclick = () => {
             (n.uo ||
-              ((r = { ...n }),
+              ((r = { ...n, adapt: r.adapt }),
               e(r, i),
               (document.getElementById("bm-o").textContent = n.name)),
               F.querySelectorAll("button").forEach((e) => {
@@ -10181,6 +10329,34 @@
         L.appendChild(B),
         L.appendChild(R),
         L.appendChild(U));
+      // Color mode: lets the crosshair adapt to the canvas color beneath it.
+      const bmCm = document.createElement("div");
+      bmCm.style.cssText = L.style.cssText;
+      const bmCmT = document.createElement("div");
+      ((bmCmT.textContent = "Crosshair Color Mode:"), (bmCmT.style.cssText = B.style.cssText));
+      const bmCmD = document.createElement("div");
+      ((bmCmD.textContent =
+        "Fixed always uses the color above. Auto swaps to a contrasting color only where it would blend into the painted pixel beneath. Invert always uses the inverse of the painted pixel beneath. Unpainted spots keep the chosen color."),
+        (bmCmD.style.cssText =
+          "\n    font-size: 0.9em; \n    margin-bottom: 12px; \n    color: var(--slate-300);\n    line-height: 1.4;\n    letter-spacing: -0.005em;\n  "));
+      const bmCmS = document.createElement("select");
+      ([
+        ["off", "Fixed"],
+        ["auto", "Auto (contrast when similar)"],
+        ["invert", "Invert"],
+      ].forEach(([v, t]) => {
+        const op = document.createElement("option");
+        ((op.value = v), (op.textContent = t), bmCmS.appendChild(op));
+      }),
+        (bmCmS.value = r.adapt || "off"),
+        (bmCmS.style.cssText =
+          "\n    width: 100%;\n    padding: 8px 10px;\n    border: 1px solid var(--slate-600);\n    border-radius: 8px;\n    background: var(--slate-700);\n    color: var(--slate-100);\n    font-weight: 600;\n    cursor: pointer;\n  "),
+        (bmCmS.onchange = () => {
+          r.adapt = bmCmS.value;
+        }),
+        bmCm.appendChild(bmCmT),
+        bmCm.appendChild(bmCmD),
+        bmCm.appendChild(bmCmS));
       const W = document.createElement("div");
       W.style.cssText = `\n    background: linear-gradient(135deg, var(--slate-800), var(--slate-750));\n    border: 1px solid var(--slate-700);\n    border-radius: ${J};\n    padding: ${P};\n    margin-bottom: ${j};\n    position: relative;\n    z-index: 1;\n  `;
       const Y = document.createElement("div");
@@ -10860,6 +11036,7 @@
         In.appendChild(z),
         In.appendChild(F),
         In.appendChild(L),
+        In.appendChild(bmCm),
         In.appendChild(W));
       const Dn = document.createElement("div");
       Dn.style.cssText = `\n    background: linear-gradient(135deg, var(--slate-800), var(--slate-750));\n    border: 1px solid var(--slate-700);\n    border-radius: ${J};\n    padding: ${P};\n    margin-bottom: ${j};\n    position: relative;\n    z-index: 1;`;
