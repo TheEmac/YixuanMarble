@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yixuan Marble
 // @namespace    yixuan-marble
-// @version      1.3.10
+// @version      1.3.11
 // @description  A userscript to automate and/or enhance the user experience on Wplace.live. Make sure to comply with the site's Terms of Service, and rules! This script is not affiliated with Wplace.live in any way, use at your own risk. This script is not affiliated with TamperMonkey. The author of this userscript is not responsible for any damages, issues, loss of data, or punishment that may occur as a result of using this script. This script is provided "as is" under the MPL-2.0 license. The "Blue Marble" icon is licensed under CC0 1.0 Universal (CC0 1.0) Public Domain Dedication. The image is owned by NASA. Originally created by Seris0 as "Skirk Marble".
 // @author       Yixuan (original script by Seris0, SwingTheVine)
 // @license      MPL-2.0
@@ -7589,25 +7589,13 @@
               !l)
             ) {
               const n = document.createElement("div");
+              // Premium-color badge only. It used to click wplace's palette
+              // button, but that synthetic click sets wplace's UntrustedPalette
+              // anti-cheat flag, so it is intentionally not clickable.
               ((n.innerHTML = "💧"),
-                (n.title = "Click to select this color in the palette"),
+                (n.title = "Premium color"),
                 (n.style.cssText =
-                  "\n          font-size: 16px;\n          cursor: pointer;\n          opacity: 0.7;\n          user-select: none;\n          transition: opacity 0.2s ease;\n        "),
-                (n.onmouseenter = () => (n.style.opacity = "1")),
-                (n.onmouseleave = () => (n.style.opacity = "0.7")),
-                (n.onclick = (n) => {
-                  (n.stopPropagation(),
-                    document
-                      .querySelectorAll('button[id^="color-"]')
-                      .forEach((n) => {
-                        window.getComputedStyle(n).backgroundColor ===
-                          `rgb(${i[0]}, ${i[1]}, ${i[2]})` &&
-                          (n.click(),
-                          void 0 !== ye &&
-                            ye.ze &&
-                            ye.ze(`Selected color: ${e.name}`));
-                      }));
-                }),
+                  "\n          font-size: 16px;\n          opacity: 0.7;\n          user-select: none;\n        "),
                 L.appendChild(n));
             }
             const J = document.createElement("div");
