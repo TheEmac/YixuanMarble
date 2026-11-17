@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yixuan Marble
 // @namespace    yixuan-marble
-// @version      1.3.9
+// @version      1.3.10
 // @description  A userscript to automate and/or enhance the user experience on Wplace.live. Make sure to comply with the site's Terms of Service, and rules! This script is not affiliated with Wplace.live in any way, use at your own risk. This script is not affiliated with TamperMonkey. The author of this userscript is not responsible for any damages, issues, loss of data, or punishment that may occur as a result of using this script. This script is provided "as is" under the MPL-2.0 license. The "Blue Marble" icon is licensed under CC0 1.0 Universal (CC0 1.0) Public Domain Dedication. The image is owned by NASA. Originally created by Seris0 as "Skirk Marble".
 // @author       Yixuan (original script by Seris0, SwingTheVine)
 // @license      MPL-2.0
@@ -1704,7 +1704,14 @@
             .filter((x) => x && isNaN(Number(x)))
             .filter((x) => x && !x.includes("."))
             .pop();
-          if (name === "me") {
+          const d = e.data.jsonData;
+          if (
+            name === "me" &&
+            d &&
+            d.name != null &&
+            Number.isFinite(Number(d.level)) &&
+            Number.isFinite(Number(d.pixelsPainted))
+          ) {
             window.__bmSawMe = !0;
             window.__bmLastMe = { endpoint: r, jsonData: e.data.jsonData };
           }
@@ -4037,6 +4044,16 @@
               return void e.Te(
                 "You are not logged in!\nCould not fetch userdata.",
               );
+            // Other endpoints ending in "me" (e.g. the shop's bundles tab)
+            // return non-user payloads; ignore them so the panel isn't wiped.
+            if (
+              !o ||
+              "object" != typeof o ||
+              null == o.name ||
+              !Number.isFinite(Number(o.level)) ||
+              !Number.isFinite(Number(o.pixelsPainted))
+            )
+              return;
             const n = Math.ceil(
               Math.pow(Math.floor(o.level) * Math.pow(30, 0.65), 1 / 0.65) -
                 o.pixelsPainted,
